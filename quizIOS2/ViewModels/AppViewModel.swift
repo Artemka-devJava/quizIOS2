@@ -81,7 +81,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func startGameAsHost() {
-        guard players.count >= 2 else { return }
+        guard players.count >= 1 else {
+            connectionHint = "Нужен хотя бы 1 подключённый игрок"
+            return
+        }
         phase = .hostControl
 
         Task {

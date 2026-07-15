@@ -40,7 +40,11 @@ struct HostLobbyView: View {
                 viewModel.startGameAsHost()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(viewModel.players.count < 2)
+            .disabled(viewModel.players.isEmpty)
+
+            Text(viewModel.players.isEmpty ? "Подключите хотя бы 1 игрока для старта" : "Можно начинать игру")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Text(viewModel.connectionHint)
                 .font(.caption)
