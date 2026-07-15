@@ -2,51 +2,43 @@
 //  ContentView.swift
 //  quizIOS2
 //
-//  Корневое представление приложения — TabView с 5 разделами.
+//  Корневой роутер экранов приложения "Я Знаю".
 //
 
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var viewModel = AppViewModel()
+
     var body: some View {
-        TabView {
-            // Вкладка 1: Главная
-            HomeView()
-                .tabItem {
-                    Label("Главная", systemImage: "house.fill")
+        NavigationStack {
+            Group {
+                switch viewModel.phase {
+                case .splash:
+                    SplashView()
+
+                case .roleSelection:
+                    RoleSelectionView(viewModel: viewModel)
+
+                case .hostLobby:
+                    HostLobbyView(viewModel: viewModel)
+
+                case .hostControl:
+                    HostControlView(viewModel: viewModel)
+
+                case .playerJoin:
+                    PlayerJoinView(viewModel: viewModel)
+
+                case .playerWaiting:
+                    PlayerWaitingView(viewModel: viewModel)
+
+                case .playerQuestion:
+                    GameView(viewModel: viewModel)
                 }
-
-            // Вкладка 2: UI-компоненты и Макеты
-            NavigationStack {
-                UIBasicsView()
             }
-            .tabItem {
-                Label("UI", systemImage: "rectangle.3.group.fill")
-            }
-
-            // Вкладка 3: Анимации и Жесты
-            NavigationStack {
-                AnimationsAndGesturesView()
-            }
-            .tabItem {
-                Label("Анимации", systemImage: "sparkles")
-            }
-
-            // Вкладка 4: Состояние и данные
-            NavigationStack {
-                StateAndDataView()
-            }
-            .tabItem {
-                Label("Данные", systemImage: "cylinder.split.1x2.fill")
-            }
-
-            // Вкладка 5: Навигация и хранение
-            NavigationStack {
-                NavigationDemoView()
-            }
-            .tabItem {
-                Label("Навигация", systemImage: "arrow.right.square.fill")
-            }
+        }
+        .onAppear {
+            viewModel.bootSplash()
         }
     }
 }
@@ -54,4 +46,3 @@ struct ContentView: View {
 #Preview {
     ContentView()
 }
-

@@ -10,29 +10,43 @@ import XCTest
 
 final class quizIOS2Tests: XCTestCase {
 
-    override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
+    func testGameMessageEncodingDecoding() throws {
+        let question = QuestionPayload(
+            category: "Музыка и поп-культура",
+            text: "Какой трек стал вирусным в TikTok в 2020-м?",
+            options: ["Sorry", "Yummy", "Peaches", "Baby"],
+            correctIndex: 1
+        )
+
+        let source = GameMessage(
+            kind: .question,
+            senderID: UUID(),
+            senderNickname: "Host",
+            question: question
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let data = try encoder.encode(source)
+        let decoded = try decoder.decode(GameMessage.self, from: data)
+
+        XCTAssertEqual(decoded.kind, .question)
+        XCTAssertEqual(decoded.question?.text, question.text)
+        XCTAssertEqual(decoded.question?.options.count, 4)
+        XCTAssertEqual(decoded.question?.correctIndex, 1)
     }
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
+    func testAnswerPayloadDefaults() {
+        let qid = UUID()
+        let pid = UUID()
+        let answer = AnswerPayload(questionID: qid, playerID: pid, selectedIndex: 2)
 
-    func testExample() throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // Any test you write for XCTest can be annotated as throws and async.
-        // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
-        // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
-        // XCTest Documentation
-        // https://developer.apple.com/documentation/xctest
-    }
-
-    func testPerformanceExample() throws {
-        // This is an example of a performance test case.
-        self.measure {
-            // Put the code you want to measure the time of here.
-        }
+        XCTAssertEqual(answer.questionID, qid)
+        XCTAssertEqual(answer.playerID, pid)
+        XCTAssertEqual(answer.selectedIndex, 2)
     }
 
 }
