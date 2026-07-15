@@ -123,12 +123,15 @@ final class NetworkManager: ObservableObject {
         lastHostIP = ip
         lastHostPort = port
 
-        guard let host = NWEndpoint.Host(ip), let nwPort = NWEndpoint.Port(rawValue: port) else {
+        // NWEndpoint.Host не Optional, поэтому валидируем только входную строку и порт.
+        let trimmedIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedIP.isEmpty, let nwPort = NWEndpoint.Port(rawValue: port) else {
             status = .failed("Неверный IP или порт")
             scheduleClientReconnect()
             return
         }
 
+        let host = NWEndpoint.Host(trimmedIP)
         let connection = NWConnection(host: host, port: nwPort, using: .tcp)
         let peer = PeerConnection(connection: connection)
         clientPeer = peer
@@ -290,12 +293,12 @@ final class NetworkManager: ObservableObject {
     }
 
     private func sendRaw(_ data: Data, over connection: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error {
                     continuation.resume(throwing: error)
                 } else {
-                    continuation.resume()
+                    continuation.resume(returning: ())
                 }
             })
         }
