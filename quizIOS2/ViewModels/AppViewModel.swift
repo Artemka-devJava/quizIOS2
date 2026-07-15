@@ -9,8 +9,7 @@ final class AppViewModel: ObservableObject {
 
     @Published var hostNickname: String = "Ведущий"
     @Published var playerNickname: String = ""
-    @Published var hostIP: String = ""
-    @Published var port: String = "5000"
+    @Published var selectedServerID: String?
 
     @Published var players: [PlayerInfo] = []
     @Published var currentQuestion: QuestionPayload?
@@ -24,11 +23,20 @@ final class AppViewModel: ObservableObject {
     // Для хоста: результаты ответов от игроков.
     @Published var hostReceivedAnswers: [AnswerPayload] = []
 
+    private var cancellables: Set<AnyCancellable> = []
+
     init() {
         network.onEvent = { [weak self] event in
             guard let self else { return }
             self.handle(event)
         }
+
+        // Пробрасываем изменения вложенного ObservableObject в UI ViewModel.
+        network.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
 
     func bootSplash() {
@@ -41,6 +49,11 @@ final class AppViewModel: ObservableObject {
     func choose(role: UserRole) {
         selectedRole = role
         phase = (role == .host) ? .hostLobby : .playerJoin
+
+        if role == .player {
+            refreshServerDiscovery()
+            connectionHint = "Поиск ведущих в локальной сети..."
+        }
     }
 
     func resetToRoleSelection() {
@@ -50,20 +63,21 @@ final class AppViewModel: ObservableObject {
         selectedAnswerIndex = nil
         lastResult = nil
         hostReceivedAnswers.removeAll()
+        selectedServerID = nil
+        connectionHint = ""
         selectedRole = nil
         phase = .roleSelection
     }
 
     func startHosting() {
-        guard let portValue = UInt16(port) else {
-            connectionHint = "Неверный порт"
-            return
-        }
-
         Task {
-            await network.startServer(port: portValue)
-            connectionHint = "Сервер запущен на порту \(portValue)"
+            await network.startServer()
+            connectionHint = "Сервер запущен на порту \(NetworkManager.fixedPort)"
         }
+    }
+
+    func refreshServerDiscovery() {
+        network.startBrowsingServers()
     }
 
     func startGameAsHost() {
@@ -77,24 +91,26 @@ final class AppViewModel: ObservableObject {
     }
 
     func connectAsPlayer() {
-        guard !playerNickname.trimmingCharacters(in: .whitespaces).isEmpty else {
+        guard !playerNickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             connectionHint = "Введите ник"
             return
         }
-        guard let portValue = UInt16(port) else {
-            connectionHint = "Неверный порт"
+
+        guard let selectedServerID else {
+            connectionHint = "Выберите сервер из списка"
             return
         }
 
         Task {
-            await network.connectToHost(ip: hostIP, port: portValue)
+            await network.connectToDiscoveredServer(id: selectedServerID)
             try? await Task.sleep(nanoseconds: 500_000_000)
 
             let me = PlayerInfo(id: localPlayerID, nickname: playerNickname)
             let hello = GameMessage(kind: .hello, senderID: localPlayerID, senderNickname: playerNickname, player: me)
             await network.send(hello)
 
-            connectionHint = "Подключение к \(hostIP):\(portValue)"
+            let serverName = network.discoveredServers.first(where: { $0.id == selectedServerID })?.name ?? "ведущий"
+            connectionHint = "Подключение к \(serverName)"
             phase = .playerWaiting
         }
     }
@@ -183,9 +199,6 @@ final class AppViewModel: ObservableObject {
 
             case .error:
                 connectionHint = msg.text ?? "Ошибка сети"
-
-            default:
-                break
             }
         }
     }

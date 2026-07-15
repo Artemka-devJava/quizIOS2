@@ -21,6 +21,12 @@ enum NetworkEvent {
     case message(GameMessage)
 }
 
+struct DiscoveredServer: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let details: String
+}
+
 private final class PeerConnection {
     let id: UUID
     let connection: NWConnection
@@ -35,18 +41,27 @@ private final class PeerConnection {
 
 @MainActor
 final class NetworkManager: ObservableObject {
+    static let fixedPort: UInt16 = 5000
+    static let serviceType = "_yaznayu._tcp"
+    static let serviceName = "YaZnayu"
+
     @Published private(set) var mode: NetworkMode = .idle
     @Published private(set) var status: ConnectionStatus = .disconnected
+    @Published private(set) var discoveredServers: [DiscoveredServer] = []
 
     var onEvent: ((NetworkEvent) -> Void)?
 
     private var listener: NWListener?
+    private var browser: NWBrowser?
+
     private var peers: [UUID: PeerConnection] = [:]
     private var clientPeer: PeerConnection?
-    private var listenerPort: UInt16 = 5000
+    private var discoveredEndpoints: [String: NWEndpoint] = [:]
 
     private var lastHostIP: String?
-    private var lastHostPort: UInt16 = 5000
+    private var lastHostPort: UInt16 = NetworkManager.fixedPort
+    private var lastEndpoint: NWEndpoint?
+
     private var reconnectTask: Task<Void, Never>?
     private var hostRestartTask: Task<Void, Never>?
 
@@ -64,23 +79,25 @@ final class NetworkManager: ObservableObject {
         self.decoder = decoder
     }
 
-    func startServer(port: UInt16 = 5000, serviceName: String? = "YaZnayu") async {
+    func startServer() async {
         stopAll()
         mode = .host
         status = .connecting
-        listenerPort = port
 
         do {
             let parameters = NWParameters.tcp
             parameters.allowLocalEndpointReuse = true
 
-            let nwPort = NWEndpoint.Port(rawValue: port) ?? 5000
+            let nwPort = NWEndpoint.Port(rawValue: NetworkManager.fixedPort) ?? 5000
             let listener = try NWListener(using: parameters, on: nwPort)
             self.listener = listener
 
-            if let serviceName {
-                listener.service = NWListener.Service(name: serviceName, type: "_yaznayu._tcp", domain: nil, txtRecord: nil)
-            }
+            listener.service = NWListener.Service(
+                name: NetworkManager.serviceName,
+                type: NetworkManager.serviceType,
+                domain: nil,
+                txtRecord: nil
+            )
 
             listener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
@@ -89,7 +106,7 @@ final class NetworkManager: ObservableObject {
                     case .ready:
                         self.status = .connected
                     case .failed(let error):
-                        self.status = .failed(error.localizedDescription)
+                        self.status = .failed("Сервер: \(error.localizedDescription)")
                         self.scheduleHostRestart()
                     case .cancelled:
                         if self.mode == .idle {
@@ -110,20 +127,62 @@ final class NetworkManager: ObservableObject {
 
             listener.start(queue: queue)
         } catch {
-            status = .failed(error.localizedDescription)
+            status = .failed("Не удалось запустить сервер: \(error.localizedDescription)")
             scheduleHostRestart()
         }
     }
 
-    func connectToHost(ip: String, port: UInt16 = 5000) async {
-        stopClientOnly()
-        mode = .client
-        status = .connecting
+    func startBrowsingServers() {
+        stopBrowsingServers()
 
-        lastHostIP = ip
-        lastHostPort = port
+        let parameters = NWParameters.tcp
+        let browser = NWBrowser(for: .bonjour(type: NetworkManager.serviceType, domain: nil), using: parameters)
+        self.browser = browser
 
-        // NWEndpoint.Host не Optional, поэтому валидируем только входную строку и порт.
+        browser.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            Task { @MainActor in
+                switch state {
+                case .failed(let error):
+                    self.status = .failed("Поиск серверов: \(error.localizedDescription)")
+                case .ready:
+                    if self.mode != .host && self.status == .disconnected {
+                        self.status = .connecting
+                    }
+                default:
+                    break
+                }
+            }
+        }
+
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.updateDiscoveredServers(with: results)
+            }
+        }
+
+        browser.start(queue: queue)
+    }
+
+    func stopBrowsingServers() {
+        browser?.cancel()
+        browser = nil
+        discoveredServers = []
+        discoveredEndpoints = [:]
+    }
+
+    func connectToDiscoveredServer(id: String) async {
+        guard let endpoint = discoveredEndpoints[id] else {
+            status = .failed("Выбранный сервер недоступен")
+            startBrowsingServers()
+            return
+        }
+        await connectToEndpoint(endpoint)
+    }
+
+    func connectToHost(ip: String, port: UInt16 = NetworkManager.fixedPort) async {
+        // Оставлено как fallback: ручной IP можно использовать при необходимости.
         let trimmedIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedIP.isEmpty, let nwPort = NWEndpoint.Port(rawValue: port) else {
             status = .failed("Неверный IP или порт")
@@ -132,38 +191,17 @@ final class NetworkManager: ObservableObject {
         }
 
         let host = NWEndpoint.Host(trimmedIP)
-        let connection = NWConnection(host: host, port: nwPort, using: .tcp)
-        let peer = PeerConnection(connection: connection)
-        clientPeer = peer
-
-        connection.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            Task { @MainActor in
-                switch state {
-                case .ready:
-                    self.status = .connected
-                    self.startReceiveLoop(for: peer, isClient: true)
-                case .failed(let error):
-                    self.status = .failed(error.localizedDescription)
-                    self.scheduleClientReconnect()
-                case .cancelled:
-                    if self.mode == .idle {
-                        self.status = .disconnected
-                    } else {
-                        self.scheduleClientReconnect()
-                    }
-                default:
-                    break
-                }
-            }
-        }
-
-        connection.start(queue: queue)
+        let endpoint = NWEndpoint.hostPort(host: host, port: nwPort)
+        lastHostIP = trimmedIP
+        lastHostPort = port
+        await connectToEndpoint(endpoint)
     }
 
     func stopAll() {
         hostRestartTask?.cancel()
         reconnectTask?.cancel()
+
+        stopBrowsingServers()
 
         listener?.cancel()
         listener = nil
@@ -176,6 +214,7 @@ final class NetworkManager: ObservableObject {
         clientPeer?.connection.cancel()
         clientPeer = nil
 
+        lastEndpoint = nil
         mode = .idle
         status = .disconnected
     }
@@ -202,6 +241,96 @@ final class NetworkManager: ObservableObject {
             if mode == .client {
                 scheduleClientReconnect()
             }
+        }
+    }
+
+    private func connectToEndpoint(_ endpoint: NWEndpoint) async {
+        stopClientOnly()
+        mode = .client
+        status = .connecting
+        lastEndpoint = endpoint
+
+        let connection = NWConnection(to: endpoint, using: .tcp)
+        let peer = PeerConnection(connection: connection)
+        clientPeer = peer
+
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            Task { @MainActor in
+                switch state {
+                case .ready:
+                    self.status = .connected
+                    self.startReceiveLoop(for: peer, isClient: true)
+                case .failed(let error):
+                    self.status = .failed("Клиент: \(error.localizedDescription)")
+                    self.scheduleClientReconnect()
+                case .cancelled:
+                    if self.mode == .idle {
+                        self.status = .disconnected
+                    } else {
+                        self.scheduleClientReconnect()
+                    }
+                default:
+                    break
+                }
+            }
+        }
+
+        connection.start(queue: queue)
+    }
+
+    private func updateDiscoveredServers(with results: Set<NWBrowser.Result>) {
+        var endpointsByID: [String: NWEndpoint] = [:]
+        var items: [DiscoveredServer] = []
+
+        for result in results {
+            let endpoint = result.endpoint
+            let id = endpointID(endpoint)
+            let name = endpointName(endpoint)
+            let details = endpointDetails(endpoint)
+
+            endpointsByID[id] = endpoint
+            items.append(DiscoveredServer(id: id, name: name, details: details))
+        }
+
+        discoveredEndpoints = endpointsByID
+        discoveredServers = items.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        if mode != .host && status == .connecting && !discoveredServers.isEmpty {
+            status = .disconnected
+        }
+    }
+
+    private func endpointID(_ endpoint: NWEndpoint) -> String {
+        switch endpoint {
+        case .service(let name, let type, let domain, _):
+            return "\(name)|\(type)|\(domain)"
+        case .hostPort(let host, let port):
+            return "\(host):\(port.rawValue)"
+        default:
+            return endpoint.debugDescription
+        }
+    }
+
+    private func endpointName(_ endpoint: NWEndpoint) -> String {
+        switch endpoint {
+        case .service(let name, _, _, _):
+            return name
+        case .hostPort(let host, let port):
+            return "\(host):\(port.rawValue)"
+        default:
+            return "Локальный сервер"
+        }
+    }
+
+    private func endpointDetails(_ endpoint: NWEndpoint) -> String {
+        switch endpoint {
+        case .service(_, let type, let domain, _):
+            return "\(type) \(domain)"
+        case .hostPort(_, let port):
+            return "Порт \(port.rawValue)"
+        default:
+            return "Обнаружен по Bonjour"
         }
     }
 
@@ -311,12 +440,16 @@ final class NetworkManager: ObservableObject {
 
     private func scheduleClientReconnect() {
         reconnectTask?.cancel()
-        guard mode == .client, let ip = lastHostIP else { return }
+        guard mode == .client else { return }
 
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self else { return }
-            await self.connectToHost(ip: ip, port: self.lastHostPort)
+            if let endpoint = self.lastEndpoint {
+                await self.connectToEndpoint(endpoint)
+            } else if let ip = self.lastHostIP {
+                await self.connectToHost(ip: ip, port: self.lastHostPort)
+            }
         }
     }
 
@@ -327,7 +460,7 @@ final class NetworkManager: ObservableObject {
         hostRestartTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self else { return }
-            await self.startServer(port: self.listenerPort)
+            await self.startServer()
         }
     }
 }

@@ -11,11 +11,15 @@ struct HostLobbyView: View {
             TextField("Имя ведущего", text: $viewModel.hostNickname)
                 .textFieldStyle(.roundedBorder)
 
-            TextField("Порт", text: $viewModel.port)
-                .keyboardType(.numberPad)
-                .textFieldStyle(.roundedBorder)
+            HStack {
+                Text("Статический порт")
+                Spacer()
+                Text("\(NetworkManager.fixedPort)")
+                    .font(.headline)
+            }
+            .padding(.horizontal, 2)
 
-            Button("Запустить сервер") {
+            Button("Перезапустить сервер") {
                 viewModel.startHosting()
             }
             .buttonStyle(.borderedProminent)
@@ -38,6 +42,10 @@ struct HostLobbyView: View {
             .buttonStyle(.borderedProminent)
             .disabled(viewModel.players.count < 2)
 
+            Text(viewModel.connectionHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Button("Назад") {
                 viewModel.resetToRoleSelection()
             }
@@ -45,6 +53,11 @@ struct HostLobbyView: View {
         }
         .padding()
         .navigationTitle("Ведущий")
+        .onAppear {
+            if viewModel.network.mode != .host || viewModel.network.status == .disconnected {
+                viewModel.startHosting()
+            }
+        }
     }
 
     private var statusText: String {
@@ -62,4 +75,3 @@ struct HostLobbyView: View {
         HostLobbyView(viewModel: AppViewModel())
     }
 }
-
