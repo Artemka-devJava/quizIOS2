@@ -75,22 +75,11 @@
 		};
 /* End PBXGroup section */
 
-/* Begin PBXHeadersBuildPhase section */
-		FDA38C4330079161002C043C /* Headers */ = {
-			isa = PBXHeadersBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXHeadersBuildPhase section */
-
 /* Begin PBXNativeTarget section */
 		FDA38C4730079161002C043C /* quizIOS2 */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FDA38C5C30079161002C043C /* Build configuration list for PBXNativeTarget "quizIOS2" */;
 			buildPhases = (
-				FDA38C4330079161002C043C /* Headers */,
 				FDA38C4430079161002C043C /* Sources */,
 				FDA38C4530079161002C043C /* Frameworks */,
 				FDA38C4630079161002C043C /* Resources */,
@@ -357,6 +346,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MACH_O_TYPE = mh_execute;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = fixbyte.quizIOS2;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -366,6 +356,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				WRAPPER_EXTENSION = app;
 			};
 			name = Debug;
 		};
@@ -386,6 +377,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MACH_O_TYPE = mh_execute;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = fixbyte.quizIOS2;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -395,6 +387,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				WRAPPER_EXTENSION = app;
 			};
 			name = Release;
 		};
