@@ -37,9 +37,11 @@ struct PlayerJoinView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(server.name)
-                                Text(server.details)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                if !server.details.isEmpty {
+                                    Text(server.details)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             Spacer()
                             if viewModel.selectedServerID == server.id {

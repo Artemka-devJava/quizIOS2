@@ -14,8 +14,6 @@ struct HostLobbyView: View {
     var body: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("Лобби ведущего")
-                    .font(.title2.bold())
                 Spacer()
                 Button {
                     activeSheet = .rules

@@ -335,12 +335,12 @@ final class NetworkManager: ObservableObject {
 
     private func endpointDetails(_ endpoint: NWEndpoint) -> String {
         switch endpoint {
-        case .service(_, let type, let domain, _):
-            return "\(type) \(domain)"
+        case .service:
+            return ""
         case .hostPort(_, let port):
             return "Порт \(port.rawValue)"
         default:
-            return "Обнаружен по Bonjour"
+            return ""
         }
     }
 
