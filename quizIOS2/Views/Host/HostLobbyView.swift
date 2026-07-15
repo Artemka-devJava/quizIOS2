@@ -73,7 +73,7 @@ struct HostLobbyView: View {
             }
         }
         .sheet(isPresented: $showSettings) {
-            HostSettingsView(viewModel: viewModel)
+            HostSettingsSheet(viewModel: viewModel)
         }
     }
 
@@ -83,6 +83,40 @@ struct HostLobbyView: View {
         case .connecting: return "Запуск..."
         case .disconnected: return "Отключено"
         case .failed(let reason): return "Ошибка: \(reason)"
+        }
+    }
+}
+
+private struct HostSettingsSheet: View {
+    @ObservedObject var viewModel: AppViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Сервер") {
+                    TextField("Имя ведущего", text: $viewModel.hostNickname)
+                    TextField("Порт", text: $viewModel.hostPortText)
+                        .keyboardType(.numberPad)
+                    Text("Текущий: \(viewModel.hostPortText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Button("Применить и перезапустить сервер") {
+                        viewModel.applyHostSettings()
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .navigationTitle("Настройки ведущего")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
         }
     }
 }
