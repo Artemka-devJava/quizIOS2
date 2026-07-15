@@ -8,6 +8,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedRole: UserRole?
 
     @Published var hostNickname: String = "Ведущий"
+    @Published var hostPortText: String = "\(NetworkManager.defaultPort)"
     @Published var playerNickname: String = ""
     @Published var selectedServerID: String?
 
@@ -70,10 +71,19 @@ final class AppViewModel: ObservableObject {
     }
 
     func startHosting() {
-        Task {
-            await network.startServer()
-            connectionHint = "Сервер запущен на порту \(NetworkManager.fixedPort)"
+        guard let port = UInt16(hostPortText), port > 0 else {
+            connectionHint = "Неверный порт"
+            return
         }
+
+        Task {
+            await network.startServer(port: port, serviceName: hostNickname)
+            connectionHint = "Сервер \"\(hostNickname)\" запущен на порту \(port)"
+        }
+    }
+
+    func applyHostSettings() {
+        startHosting()
     }
 
     func refreshServerDiscovery() {

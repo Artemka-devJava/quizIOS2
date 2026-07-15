@@ -2,19 +2,29 @@ import SwiftUI
 
 struct HostLobbyView: View {
     @ObservedObject var viewModel: AppViewModel
+    @State private var showSettings = false
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Лобби ведущего")
-                .font(.title2.bold())
+            HStack {
+                Text("Лобби ведущего")
+                    .font(.title2.bold())
+                Spacer()
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("Настройки", systemImage: "gearshape")
+                }
+                .buttonStyle(.bordered)
+            }
 
             TextField("Имя ведущего", text: $viewModel.hostNickname)
                 .textFieldStyle(.roundedBorder)
 
             HStack {
-                Text("Статический порт")
+                Text("Порт")
                 Spacer()
-                Text("\(NetworkManager.fixedPort)")
+                Text(viewModel.hostPortText)
                     .font(.headline)
             }
             .padding(.horizontal, 2)
@@ -61,6 +71,9 @@ struct HostLobbyView: View {
             if viewModel.network.mode != .host || viewModel.network.status == .disconnected {
                 viewModel.startHosting()
             }
+        }
+        .sheet(isPresented: $showSettings) {
+            HostSettingsView(viewModel: viewModel)
         }
     }
 

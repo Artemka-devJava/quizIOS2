@@ -41,9 +41,8 @@ private final class PeerConnection {
 
 @MainActor
 final class NetworkManager: ObservableObject {
-    static let fixedPort: UInt16 = 5000
+    static let defaultPort: UInt16 = 5000
     static let serviceType = "_yaznayu._tcp"
-    static let serviceName = "YaZnayu"
 
     @Published private(set) var mode: NetworkMode = .idle
     @Published private(set) var status: ConnectionStatus = .disconnected
@@ -58,8 +57,11 @@ final class NetworkManager: ObservableObject {
     private var clientPeer: PeerConnection?
     private var discoveredEndpoints: [String: NWEndpoint] = [:]
 
+    private var currentServerPort: UInt16 = NetworkManager.defaultPort
+    private var currentServiceName = "Host"
+
     private var lastHostIP: String?
-    private var lastHostPort: UInt16 = NetworkManager.fixedPort
+    private var lastHostPort: UInt16 = NetworkManager.defaultPort
     private var lastEndpoint: NWEndpoint?
 
     private var reconnectTask: Task<Void, Never>?
@@ -79,21 +81,29 @@ final class NetworkManager: ObservableObject {
         self.decoder = decoder
     }
 
-    func startServer() async {
+    func startServer(port: UInt16 = NetworkManager.defaultPort, serviceName: String) async {
         stopAll()
         mode = .host
         status = .connecting
+
+        currentServerPort = port
+        let trimmedName = serviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentServiceName = trimmedName.isEmpty ? "Host" : trimmedName
 
         do {
             let parameters = NWParameters.tcp
             parameters.allowLocalEndpointReuse = true
 
-            let nwPort = NWEndpoint.Port(rawValue: NetworkManager.fixedPort) ?? 5000
+            guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+                status = .failed("Неверный порт")
+                return
+            }
+
             let listener = try NWListener(using: parameters, on: nwPort)
             self.listener = listener
 
             listener.service = NWListener.Service(
-                name: NetworkManager.serviceName,
+                name: currentServiceName,
                 type: NetworkManager.serviceType,
                 domain: nil,
                 txtRecord: nil
@@ -181,8 +191,8 @@ final class NetworkManager: ObservableObject {
         await connectToEndpoint(endpoint)
     }
 
-    func connectToHost(ip: String, port: UInt16 = NetworkManager.fixedPort) async {
-        // Оставлено как fallback: ручной IP можно использовать при необходимости.
+    func connectToHost(ip: String, port: UInt16 = NetworkManager.defaultPort) async {
+        // Fallback для ручного подключения при необходимости.
         let trimmedIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedIP.isEmpty, let nwPort = NWEndpoint.Port(rawValue: port) else {
             status = .failed("Неверный IP или порт")
@@ -460,7 +470,7 @@ final class NetworkManager: ObservableObject {
         hostRestartTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self else { return }
-            await self.startServer()
+            await self.startServer(port: self.currentServerPort, serviceName: self.currentServiceName)
         }
     }
 }
