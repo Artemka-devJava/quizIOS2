@@ -42,7 +42,7 @@ struct AnswerPayload: Codable, Equatable {
     let selectedIndex: Int
     let sentAt: Date
 
-    init(questionID: UUID, playerID: UUID, selectedIndex: Int, sentAt: Date = Date()) {
+    init(questionID: UUID = UUID(), playerID: UUID, selectedIndex: Int = 0, sentAt: Date = Date()) {
         self.questionID = questionID
         self.playerID = playerID
         self.selectedIndex = selectedIndex
@@ -51,16 +51,20 @@ struct AnswerPayload: Codable, Equatable {
 }
 
 struct AnswerResultPayload: Codable, Equatable {
-    let questionID: UUID
+    let playerID: UUID
     let isCorrect: Bool
-    let correctIndex: Int
+    let awardedPoints: Int
 }
 
 enum MessageKind: String, Codable {
     case hello
     case playerList
     case gameStarted
-    case question
+    case roundOpened
+    case buzz
+    case responderSelected
+    case responderCleared
+    case roundClosed
     case answer
     case answerResult
     case error
@@ -76,6 +80,7 @@ struct GameMessage: Codable {
     let question: QuestionPayload?
     let answer: AnswerPayload?
     let answerResult: AnswerResultPayload?
+    let scoreValue: Int?
     let text: String?
     let sentAt: Date
 
@@ -89,6 +94,7 @@ struct GameMessage: Codable {
         question: QuestionPayload? = nil,
         answer: AnswerPayload? = nil,
         answerResult: AnswerResultPayload? = nil,
+        scoreValue: Int? = nil,
         text: String? = nil,
         sentAt: Date = Date()
     ) {
@@ -101,6 +107,7 @@ struct GameMessage: Codable {
         self.question = question
         self.answer = answer
         self.answerResult = answerResult
+        self.scoreValue = scoreValue
         self.text = text
         self.sentAt = sentAt
     }

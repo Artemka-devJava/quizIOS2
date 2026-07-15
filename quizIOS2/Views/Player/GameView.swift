@@ -5,47 +5,53 @@ struct GameView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            if let q = viewModel.currentQuestion {
-                Text(q.category)
-                    .font(.caption)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(.blue.opacity(0.15), in: Capsule())
+            Text("Раунд")
+                .font(.title2.bold())
 
-                Text(q.text)
-                    .font(.title3.bold())
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+            Text(viewModel.roundIsOpen ? "Раунд открыт" : "Ожидание открытия раунда")
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(viewModel.roundIsOpen ? .green.opacity(0.15) : .gray.opacity(0.15), in: Capsule())
 
-                ForEach(Array(q.options.enumerated()), id: \.offset) { index, option in
-                    Button {
-                        viewModel.sendAnswer(index)
-                    } label: {
-                        HStack {
-                            Text(["A", "B", "C", "D"][index])
-                                .font(.headline)
-                                .frame(width: 34, height: 34)
-                                .background(.black.opacity(0.08), in: Circle())
-                            Text(option)
-                                .multilineTextAlignment(.leading)
-                            Spacer()
-                        }
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(backgroundColor(for: index), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.selectedAnswerIndex != nil)
-                }
-
-                if let result = viewModel.lastResult {
-                    Text(result.isCorrect ? "Верно!" : "Неверно")
+            if let responder = viewModel.activeResponder {
+                if responder.id == viewModel.localPlayerID {
+                    Text("Вы отвечаете!")
                         .font(.headline)
-                        .foregroundStyle(result.isCorrect ? .green : .red)
-                        .transition(.opacity.combined(with: .scale))
+                        .foregroundStyle(.green)
+                } else {
+                    Text("Сейчас отвечает: \(responder.nickname)")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
                 }
             } else {
-                ProgressView("Ожидание вопроса")
+                Text("Кнопка «Ответить» активна для первого нажатия")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button {
+                viewModel.playerPressedAnswerButton()
+            } label: {
+                Text(viewModel.localHasAttemptedInRound ? "Вы уже нажимали" : "Ответить")
+                    .font(.title3.bold())
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canBuzz)
+
+            if let result = viewModel.lastResult {
+                if result.playerID == viewModel.localPlayerID {
+                    Text(result.isCorrect ? "Верно! +\(result.awardedPoints)" : "Неверно, раунд продолжается")
+                        .font(.headline)
+                        .foregroundStyle(result.isCorrect ? .green : .red)
+                } else {
+                    Text(result.isCorrect ? "Другой игрок ответил верно" : "Ответ игрока неверный")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Button("Выйти") {
@@ -59,20 +65,8 @@ struct GameView: View {
         .navigationTitle("Раунд")
     }
 
-    private func backgroundColor(for index: Int) -> Color {
-        if let result = viewModel.lastResult {
-            if index == result.correctIndex {
-                return .green.opacity(0.2)
-            }
-            if viewModel.selectedAnswerIndex == index, !result.isCorrect {
-                return .red.opacity(0.2)
-            }
-        }
-
-        if viewModel.selectedAnswerIndex == index {
-            return .blue.opacity(0.2)
-        }
-        return .gray.opacity(0.12)
+    private var canBuzz: Bool {
+        viewModel.roundIsOpen && viewModel.activeResponder == nil && !viewModel.localHasAttemptedInRound
     }
 }
 
@@ -81,4 +75,3 @@ struct GameView: View {
         GameView(viewModel: AppViewModel())
     }
 }
-

@@ -6,8 +6,12 @@ struct PlayerWaitingView: View {
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
-            Text("Ожидание вопроса от ведущего")
+            Text("Ожидание старта игры от ведущего")
                 .font(.headline)
+            Text("После старта откроется экран раунда с кнопкой «Ответить»")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             Text(statusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -36,4 +40,3 @@ struct PlayerWaitingView: View {
         PlayerWaitingView(viewModel: AppViewModel())
     }
 }
-

@@ -7,10 +7,12 @@ struct SplashView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 16) {
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 68))
-                    .foregroundStyle(.white)
-                    .symbolEffect(.pulse)
+                Image("SplashLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 96, height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
 
                 Text("Я Знаю")
                     .font(.largeTitle.bold())
@@ -26,4 +28,3 @@ struct SplashView: View {
 #Preview {
     SplashView()
 }
-
