@@ -171,6 +171,10 @@ final class AppViewModel: ObservableObject {
 
         case .message(let msg):
             switch msg.kind {
+            case .hello:
+                // hello обрабатывается на сетевом уровне для регистрации игрока.
+                break
+
             case .playerList:
                 players = msg.players ?? []
 
