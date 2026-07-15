@@ -1,8 +1,15 @@
 import SwiftUI
 
+private enum HostLobbySheet: String, Identifiable {
+    case rules
+    case settings
+
+    var id: String { rawValue }
+}
+
 struct HostLobbyView: View {
     @ObservedObject var viewModel: AppViewModel
-    @State private var showSettings = false
+    @State private var activeSheet: HostLobbySheet?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -11,7 +18,13 @@ struct HostLobbyView: View {
                     .font(.title2.bold())
                 Spacer()
                 Button {
-                    showSettings = true
+                    activeSheet = .rules
+                } label: {
+                    Label("Правила", systemImage: "list.bullet.clipboard")
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    activeSheet = .settings
                 } label: {
                     Label("Настройки", systemImage: "gearshape")
                 }
@@ -20,14 +33,6 @@ struct HostLobbyView: View {
 
             TextField("Имя ведущего", text: $viewModel.hostNickname)
                 .textFieldStyle(.roundedBorder)
-
-            HStack {
-                Text("Порт")
-                Spacer()
-                Text(viewModel.hostPortText)
-                    .font(.headline)
-            }
-            .padding(.horizontal, 2)
 
             Button("Перезапустить сервер") {
                 viewModel.startHosting()
@@ -72,8 +77,13 @@ struct HostLobbyView: View {
                 viewModel.startHosting()
             }
         }
-        .sheet(isPresented: $showSettings) {
-            HostSettingsSheet(viewModel: viewModel)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .settings:
+                HostSettingsSheet(viewModel: viewModel)
+            case .rules:
+                HostRulesSheet()
+            }
         }
     }
 
@@ -117,6 +127,53 @@ private struct HostSettingsSheet: View {
                     Button("Закрыть") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+private struct HostRulesSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Как проходит раунд")
+                        .font(.title3.bold())
+
+                    RuleRow(number: "1", text: "Ведущий задаёт вопрос устно или читает его из внешнего источника.")
+                    RuleRow(number: "2", text: "Ведущий нажимает «Открыть раунд».")
+                    RuleRow(number: "3", text: "Игроки нажимают кнопку «Ответить». Засчитывается только первое нажатие.")
+                    RuleRow(number: "4", text: "Ведущий видит, кто ответил первым, и принимает решение.")
+                    RuleRow(number: "5", text: "Если ответ неверный — раунд продолжается, но этот игрок повторно нажать уже не может.")
+                    RuleRow(number: "6", text: "Если ответ верный — игрок получает 1 очко, а раунд закрывается.")
+                }
+                .padding()
+            }
+            .navigationTitle("Правила")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct RuleRow: View {
+    let number: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(number)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(.blue, in: Circle())
+
+            Text(text)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

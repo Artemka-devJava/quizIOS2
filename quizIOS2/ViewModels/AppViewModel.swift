@@ -93,7 +93,7 @@ final class AppViewModel: ObservableObject {
 
         Task {
             await network.startServer(port: port, serviceName: hostNickname)
-            connectionHint = "Сервер \"\(hostNickname)\" запущен на порту \(port)"
+            connectionHint = "Сервер \"\(hostNickname)\" запущен"
         }
     }
 
