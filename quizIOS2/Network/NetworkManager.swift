@@ -92,7 +92,6 @@ final class NetworkManager: ObservableObject {
 
         do {
             let parameters = NWParameters.tcp
-            parameters.allowLocalEndpointReuse = true
 
             guard let nwPort = NWEndpoint.Port(rawValue: port) else {
                 status = .failed("Неверный порт")
