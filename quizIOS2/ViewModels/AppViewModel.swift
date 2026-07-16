@@ -7,9 +7,9 @@ final class AppViewModel: ObservableObject {
     @Published var phase: AppPhase = .splash
     @Published var selectedRole: UserRole?
 
-    @Published var hostNickname: String = "Ведущий"
-    @Published var hostPortText: String = "\(NetworkManager.defaultPort)"
-    @Published var playerNickname: String = ""
+    @AppStorage("hostNickname") var hostNickname: String = "Ведущий"
+    @AppStorage("hostPortText") var hostPortText: String = "\(NetworkManager.defaultPort)"
+    @AppStorage("playerNickname") var playerNickname: String = ""
     @Published var selectedServerID: String?
 
     @Published var players: [PlayerInfo] = []
@@ -338,9 +338,6 @@ final class AppViewModel: ObservableObject {
                 }
 
 
-            case .answer:
-                // Не используется в текущем режиме buzzer-round.
-                break
 
             case .error:
                 connectionHint = msg.text ?? "Ошибка сети"

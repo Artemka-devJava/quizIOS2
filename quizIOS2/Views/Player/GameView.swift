@@ -2,71 +2,132 @@ import SwiftUI
 
 struct GameView: View {
     @ObservedObject var viewModel: AppViewModel
+    private let buzzFeedback = UIImpactFeedbackGenerator(style: .heavy)
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Раунд")
-                .font(.title2.bold())
+        ScrollView {
+            VStack(spacing: 16) {
+                // Статус раунда
+                Text(viewModel.roundIsOpen ? "Раунд открыт" : "Ожидание открытия раунда")
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(viewModel.roundIsOpen ? Color.green.opacity(0.15) : Color.gray.opacity(0.15),
+                                in: Capsule())
+                    .animation(.easeInOut(duration: 0.25), value: viewModel.roundIsOpen)
 
-            Text(viewModel.roundIsOpen ? "Раунд открыт" : "Ожидание открытия раунда")
-                .font(.caption)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(viewModel.roundIsOpen ? .green.opacity(0.15) : .gray.opacity(0.15), in: Capsule())
-
-            if let responder = viewModel.activeResponder {
-                if responder.id == viewModel.localPlayerID {
-                    Text("Вы отвечаете!")
-                        .font(.headline)
-                        .foregroundStyle(.green)
-                } else {
-                    Text("Сейчас отвечает: \(responder.nickname)")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
+                // Кто отвечает
+                Group {
+                    if let responder = viewModel.activeResponder {
+                        if responder.id == viewModel.localPlayerID {
+                            Text("Вы отвечаете!")
+                                .font(.headline)
+                                .foregroundStyle(.green)
+                        } else {
+                            Text("Сейчас отвечает: \(responder.nickname)")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if viewModel.roundIsOpen {
+                        Text("Нажмите «Ответить» первым!")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Ожидайте открытия раунда")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-            } else {
-                Text("Кнопка «Ответить» активна для первого нажатия")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+                .multilineTextAlignment(.center)
+                .animation(.easeInOut(duration: 0.2), value: viewModel.activeResponder?.id)
 
-            Button {
-                viewModel.playerPressedAnswerButton()
-            } label: {
-                Text(viewModel.localHasAttemptedInRound ? "Вы уже нажимали" : "Ответить")
-                    .font(.title3.bold())
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canBuzz)
-
-            if let result = viewModel.lastResult {
-                if result.playerID == viewModel.localPlayerID {
-                    Text(result.isCorrect ? "Верно! +\(result.awardedPoints)" : "Неверно, раунд продолжается")
-                        .font(.headline)
-                        .foregroundStyle(result.isCorrect ? .green : .red)
-                } else {
-                    Text(result.isCorrect ? "Другой игрок ответил верно" : "Ответ игрока неверный")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                // Кнопка Ответить
+                Button {
+                    buzzFeedback.impactOccurred()
+                    viewModel.playerPressedAnswerButton()
+                } label: {
+                    Text(viewModel.localHasAttemptedInRound ? "Вы уже нажимали" : "Ответить")
+                        .font(.title3.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
                 }
-            }
+                .buttonStyle(.borderedProminent)
+                .tint(canBuzz ? .blue : .gray)
+                .disabled(!canBuzz)
+                .animation(.spring(response: 0.3), value: canBuzz)
 
-            Button("Выйти") {
-                viewModel.resetToRoleSelection()
+                // Результат
+                if let result = viewModel.lastResult {
+                    resultBanner(result)
+                        .transition(.scale.combined(with: .opacity))
+                }
+
+                // Счёт
+                if !viewModel.players.isEmpty {
+                    scoreSection
+                }
+
+                Button("Выйти") {
+                    viewModel.resetToRoleSelection()
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, 4)
             }
-            .buttonStyle(.bordered)
-            .padding(.top, 8)
+            .padding()
         }
-        .padding()
         .animation(.easeInOut, value: viewModel.lastResult)
         .navigationTitle("Раунд")
+        .onAppear { buzzFeedback.prepare() }
     }
+
+    // MARK: - Subviews
+
+    @ViewBuilder
+    private func resultBanner(_ result: AnswerResultPayload) -> some View {
+        let isMe = result.playerID == viewModel.localPlayerID
+        let text: String = {
+            if isMe {
+                return result.isCorrect ? "✅ Верно! +\(result.awardedPoints)" : "❌ Неверно, раунд продолжается"
+            } else {
+                return result.isCorrect ? "Другой игрок ответил верно" : "Ответ игрока неверный"
+            }
+        }()
+        Text(text)
+            .font(.headline)
+            .foregroundStyle(result.isCorrect ? Color.green : Color.red)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(result.isCorrect ? Color.green.opacity(0.1) : Color.red.opacity(0.1),
+                        in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var scoreSection: some View {
+        GroupBox("Счёт") {
+            ForEach(sortedPlayers, id: \.id) { player in
+                HStack {
+                    Text(player.id == viewModel.localPlayerID ? "Вы (\(player.nickname))" : player.nickname)
+                        .fontWeight(player.id == viewModel.localPlayerID ? .semibold : .regular)
+                    Spacer()
+                    Text("\(viewModel.score(for: player.id))")
+                        .bold()
+                        .foregroundStyle(.blue)
+                }
+                .padding(.vertical, 2)
+                if player.id != sortedPlayers.last?.id { Divider() }
+            }
+        }
+    }
+
+    // MARK: - Helpers
 
     private var canBuzz: Bool {
         viewModel.roundIsOpen && viewModel.activeResponder == nil && !viewModel.localHasAttemptedInRound
+    }
+
+    private var sortedPlayers: [PlayerInfo] {
+        viewModel.players.sorted {
+            viewModel.score(for: $0.id) > viewModel.score(for: $1.id)
+        }
     }
 }
 
@@ -75,3 +136,5 @@ struct GameView: View {
         GameView(viewModel: AppViewModel())
     }
 }
+
+

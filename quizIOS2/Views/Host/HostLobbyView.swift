@@ -25,14 +25,11 @@ struct HostLobbyView: View {
                     activeSheet = .settings
                 } label: {
                     Label("Настройки", systemImage: "gearshape")
-                }
-                .buttonStyle(.bordered)
             }
+            .buttonStyle(.bordered)
+        }
 
-            TextField("Имя ведущего", text: $viewModel.hostNickname)
-                .textFieldStyle(.roundedBorder)
-
-            Button("Перезапустить сервер") {
+        Button("Перезапустить сервер") {
                 viewModel.startHosting()
             }
             .buttonStyle(.borderedProminent)

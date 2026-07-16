@@ -1,8 +1,6 @@
 //
 //  quizIOS2App.swift
-//  quizIOS2 — iOS Showcase App
-//
-//  Демонстрация азов и возможностей iOS-разработки на Swift + SwiftUI
+//  Я Знаю — локальная игра по Wi-Fi
 //
 
 import SwiftUI
