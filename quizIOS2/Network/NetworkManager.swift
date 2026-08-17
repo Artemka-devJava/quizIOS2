@@ -39,6 +39,24 @@ private final class PeerConnection {
     }
 }
 
+/// Небольшой помощник, чтобы гарантированно вызвать continuation ровно один раз,
+/// даже если stateUpdateHandler по какой-то причине сработает повторно
+/// до того, как мы успели отписаться.
+private final class SingleResumeGuard<T> {
+    private var isResumed = false
+    private let continuation: CheckedContinuation<T, Never>
+
+    init(_ continuation: CheckedContinuation<T, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: T) {
+        guard !isResumed else { return }
+        isResumed = true
+        continuation.resume(returning: value)
+    }
+}
+
 @MainActor
 final class NetworkManager: ObservableObject {
     static let defaultPort: UInt16 = 5000
@@ -81,7 +99,11 @@ final class NetworkManager: ObservableObject {
         self.decoder = decoder
     }
 
-    func startServer(port: UInt16 = NetworkManager.defaultPort, serviceName: String) async {
+    /// Запускает TCP-сервер и Bonjour-публикацию сервиса.
+    /// Возвращает `true`, только если listener реально перешёл в состояние `.ready`.
+    /// До этого момента UI не должен считать сервер запущенным.
+    @discardableResult
+    func startServer(port: UInt16 = NetworkManager.defaultPort, serviceName: String) async -> Bool {
         stopAll()
         mode = .host
         status = .connecting
@@ -90,23 +112,44 @@ final class NetworkManager: ObservableObject {
         let trimmedName = serviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         currentServiceName = trimmedName.isEmpty ? "Host" : trimmedName
 
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            status = .failed("Неверный порт: \(port)")
+            mode = .idle
+            return false
+        }
+
+        let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = true
+
+        let listener: NWListener
         do {
-            let parameters = NWParameters.tcp
+            listener = try NWListener(using: parameters, on: nwPort)
+        } catch {
+            status = .failed("Не удалось создать сервер: \(error.localizedDescription)")
+            mode = .idle
+            scheduleHostRestart()
+            return false
+        }
 
-            guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-                status = .failed("Неверный порт")
-                return
+        self.listener = listener
+
+        listener.service = NWListener.Service(
+            name: currentServiceName,
+            type: NetworkManager.serviceType,
+            domain: nil,
+            txtRecord: nil
+        )
+
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
+            Task { @MainActor in
+                self.acceptNewPeer(connection)
             }
+        }
 
-            let listener = try NWListener(using: parameters, on: nwPort)
-            self.listener = listener
-
-            listener.service = NWListener.Service(
-                name: currentServiceName,
-                type: NetworkManager.serviceType,
-                domain: nil,
-                txtRecord: nil
-            )
+        // Ждём реального результата запуска (ready/failed), а не просто факта вызова start().
+        let started = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let resumeGuard = SingleResumeGuard(continuation)
 
             listener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
@@ -114,31 +157,38 @@ final class NetworkManager: ObservableObject {
                     switch state {
                     case .ready:
                         self.status = .connected
+                        resumeGuard.resume(true)
+
                     case .failed(let error):
                         self.status = .failed("Сервер: \(error.localizedDescription)")
+                        self.mode = .idle
+                        self.listener?.cancel()
+                        self.listener = nil
+                        resumeGuard.resume(false)
                         self.scheduleHostRestart()
+
                     case .cancelled:
                         if self.mode == .idle {
                             self.status = .disconnected
                         }
+                        resumeGuard.resume(false)
+
+                    case .waiting(let error):
+                        // Порт занят, нет прав и т.п. — тоже считаем это неудачей запуска,
+                        // не оставляем UI бесконечно висеть в "Запуск...".
+                        self.status = .failed("Сервер ожидает: \(error.localizedDescription)")
+                        resumeGuard.resume(false)
+
                     default:
                         break
                     }
                 }
             }
 
-            listener.newConnectionHandler = { [weak self] connection in
-                guard let self else { return }
-                Task { @MainActor in
-                    self.acceptNewPeer(connection)
-                }
-            }
-
             listener.start(queue: queue)
-        } catch {
-            status = .failed("Не удалось запустить сервер: \(error.localizedDescription)")
-            scheduleHostRestart()
         }
+
+        return started
     }
 
     func startBrowsingServers() {
@@ -273,6 +323,8 @@ final class NetworkManager: ObservableObject {
                 case .failed(let error):
                     self.status = .failed("Клиент: \(error.localizedDescription)")
                     self.scheduleClientReconnect()
+                case .waiting(let error):
+                    self.status = .failed("Клиент ожидает: \(error.localizedDescription)")
                 case .cancelled:
                     if self.mode == .idle {
                         self.status = .disconnected
@@ -464,12 +516,17 @@ final class NetworkManager: ObservableObject {
 
     private func scheduleHostRestart() {
         hostRestartTask?.cancel()
-        guard mode == .host else { return }
+        guard mode != .host else {
+            // mode уже сброшен в .idle перед вызовом этой функции при .failed,
+            // но на всякий случай не планируем повторный рестарт, если сервер
+            // уже успешно поднят повторно кем-то другим.
+            return
+        }
 
         hostRestartTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self else { return }
-            await self.startServer(port: self.currentServerPort, serviceName: self.currentServiceName)
+            _ = await self.startServer(port: self.currentServerPort, serviceName: self.currentServiceName)
         }
     }
 }
