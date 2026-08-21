@@ -20,7 +20,6 @@ struct PlayerInfo: Identifiable, Codable, Equatable {
     var nickname: String
 }
 
-
 struct AnswerResultPayload: Codable, Equatable {
     let playerID: UUID
     let isCorrect: Bool

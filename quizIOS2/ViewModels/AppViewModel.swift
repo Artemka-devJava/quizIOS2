@@ -7,9 +7,9 @@ final class AppViewModel: ObservableObject {
     @Published var phase: AppPhase = .splash
     @Published var selectedRole: UserRole?
 
-    @AppStorage("hostNickname") var hostNickname: String = "Ведущий"
-    @AppStorage("hostPortText") var hostPortText: String = "\(NetworkManager.defaultPort)"
-    @AppStorage("playerNickname") var playerNickname: String = ""
+    @Published var hostNickname: String = "Ведущий"
+    @Published var hostPortText: String = "\(NetworkManager.defaultPort)"
+    @Published var playerNickname: String = ""
     @Published var selectedServerID: String?
 
     @Published var players: [PlayerInfo] = []
@@ -336,8 +336,6 @@ final class AppViewModel: ObservableObject {
                    msg.answerResult?.isCorrect == true {
                     scores[player.id] = scoreValue
                 }
-
-
 
             case .error:
                 connectionHint = msg.text ?? "Ошибка сети"
