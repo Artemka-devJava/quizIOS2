@@ -337,10 +337,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 53MV48LR9A;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "quizIOS2/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Я знаю";
-				INFOPLIST_KEY_NSBonjourServices = (
-					"_yaznayu._tcp",
-				);
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Приложение использует локальную сеть для поиска ведущего и синхронизации игры.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -373,10 +371,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 53MV48LR9A;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "quizIOS2/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Я знаю";
-				INFOPLIST_KEY_NSBonjourServices = (
-					"_yaznayu._tcp",
-				);
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Приложение использует локальную сеть для поиска ведущего и синхронизации игры.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
