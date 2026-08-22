@@ -39,10 +39,32 @@ private final class PeerConnection {
     }
 }
 
+/// Потокобезопасный "one-shot" резолвер continuation — гарантирует единственный resume()
+/// даже если callback ядра и таймаут-фолбэк сработают одновременно с разных очередей.
+private final class ResumeOnce: @unchecked Sendable {
+    private let continuation: CheckedContinuation<Void, Never>
+    private var didResume = false
+    private let lock = NSLock()
+
+    init(_ continuation: CheckedContinuation<Void, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didResume else { return }
+        didResume = true
+        continuation.resume()
+    }
+}
+
 @MainActor
 final class NetworkManager: ObservableObject {
     static let defaultPort: UInt16 = 5000
     static let serviceType = "_yaznayu._tcp"
+
+    private static let maxHostRestartAttempts = 5
 
     @Published private(set) var mode: NetworkMode = .idle
     @Published private(set) var status: ConnectionStatus = .disconnected
@@ -64,6 +86,10 @@ final class NetworkManager: ObservableObject {
 
     private var reconnectTask: Task<Void, Never>?
     private var hostRestartTask: Task<Void, Never>?
+    private var hostRestartAttempts = 0
+
+    /// Защита от повторного входа: не даём двум startServer() гоняться за одним портом.
+    private var isStartingServer = false
 
     private let queue = DispatchQueue(label: "quizIOS2.network", qos: .userInitiated)
     private let encoder: JSONEncoder
@@ -80,7 +106,22 @@ final class NetworkManager: ObservableObject {
     }
 
     func startServer(port: UInt16 = NetworkManager.defaultPort, serviceName: String) async {
-        stopAll()
+        // Не даём запустить второй listener, пока первый ещё поднимается/переподнимается.
+        guard !isStartingServer else { return }
+        isStartingServer = true
+        defer { isStartingServer = false }
+
+        hostRestartTask?.cancel()
+        hostRestartTask = nil
+
+        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: дожидаемся полной остановки предыдущего listener'а на уровне ОС,
+        // прежде чем биндиться на тот же порт заново. Раньше stopAll() только вызывал cancel()
+        // и сразу же создавался новый NWListener — сокет ещё не был освобождён ядром,
+        // из-за чего bind падал с "Address already in use", а scheduleHostRestart()
+        // тут же планировал новую попытку — получался бесконечный цикл.
+        await cancelCurrentListenerAndWait()
+        disconnectAllPeers()
+
         mode = .host
         status = .connecting
 
@@ -113,6 +154,7 @@ final class NetworkManager: ObservableObject {
                     switch state {
                     case .ready:
                         self.status = .connected
+                        self.hostRestartAttempts = 0
                     case .failed(let error):
                         self.status = .failed("Сервер: \(error.localizedDescription)")
                         self.scheduleHostRestart()
@@ -191,7 +233,10 @@ final class NetworkManager: ObservableObject {
 
     func stopAll() {
         hostRestartTask?.cancel()
+        hostRestartTask = nil
+        hostRestartAttempts = 0
         reconnectTask?.cancel()
+        reconnectTask = nil
 
         stopBrowsingServers()
 
@@ -234,6 +279,36 @@ final class NetworkManager: ObservableObject {
                 scheduleClientReconnect()
             }
         }
+    }
+
+    /// Отменяет текущий listener и ждёт подтверждения (.cancelled) от ядра,
+    /// прежде чем возвращать управление — чтобы следующий bind на тот же порт не упал
+    /// с "Address already in use". Есть защитный таймаут на случай, если callback не придёт.
+    private func cancelCurrentListenerAndWait() async {
+        guard let oldListener = listener else { return }
+        listener = nil
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumeOnce = ResumeOnce(continuation)
+
+            oldListener.stateUpdateHandler = { state in
+                if case .cancelled = state {
+                    resumeOnce.resume()
+                }
+            }
+            oldListener.cancel()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                resumeOnce.resume()
+            }
+        }
+    }
+
+    private func disconnectAllPeers() {
+        for (_, peer) in peers {
+            peer.connection.cancel()
+        }
+        peers.removeAll()
     }
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) async {
@@ -436,7 +511,7 @@ final class NetworkManager: ObservableObject {
 
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             if let endpoint = self.lastEndpoint {
                 await self.connectToEndpoint(endpoint)
             }
@@ -447,9 +522,19 @@ final class NetworkManager: ObservableObject {
         hostRestartTask?.cancel()
         guard mode == .host else { return }
 
+        hostRestartAttempts += 1
+        guard hostRestartAttempts <= NetworkManager.maxHostRestartAttempts else {
+            status = .failed("Не удалось запустить сервер на порту \(currentServerPort): порт занят. Укажите другой порт в настройках ведущего.")
+            return
+        }
+
+        // Небольшой нарастающий бэкофф вместо фиксированных 2с, чтобы не спамить лог при затяжном конфликте порта.
+        let delaySeconds = min(1.5 * Double(hostRestartAttempts), 6.0)
+        let delayNanos = UInt64(delaySeconds * 1_000_000_000)
+
         hostRestartTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard let self else { return }
+            try? await Task.sleep(nanoseconds: delayNanos)
+            guard let self, !Task.isCancelled else { return }
             await self.startServer(port: self.currentServerPort, serviceName: self.currentServiceName)
         }
     }
