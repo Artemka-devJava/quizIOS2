@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Network
+import dnssd
 
 enum NetworkMode {
     case idle
@@ -87,6 +88,7 @@ final class NetworkManager: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private var hostRestartTask: Task<Void, Never>?
     private var hostRestartAttempts = 0
+    private var lastFailureDescription = ""
 
     /// Защита от повторного входа: не даём двум startServer() гоняться за одним портом.
     private var isStartingServer = false
@@ -114,11 +116,8 @@ final class NetworkManager: ObservableObject {
         hostRestartTask?.cancel()
         hostRestartTask = nil
 
-        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: дожидаемся полной остановки предыдущего listener'а на уровне ОС,
-        // прежде чем биндиться на тот же порт заново. Раньше stopAll() только вызывал cancel()
-        // и сразу же создавался новый NWListener — сокет ещё не был освобождён ядром,
-        // из-за чего bind падал с "Address already in use", а scheduleHostRestart()
-        // тут же планировал новую попытку — получался бесконечный цикл.
+        // Дожидаемся полной остановки предыдущего listener'а на уровне ОС, прежде чем биндиться
+        // на тот же порт заново (иначе bind падает с "Address already in use").
         await cancelCurrentListenerAndWait()
         disconnectAllPeers()
 
@@ -155,8 +154,11 @@ final class NetworkManager: ObservableObject {
                     case .ready:
                         self.status = .connected
                         self.hostRestartAttempts = 0
+                        self.lastFailureDescription = ""
                     case .failed(let error):
-                        self.status = .failed("Сервер: \(error.localizedDescription)")
+                        let message = self.describeNetworkError(error, context: "Сервер")
+                        self.lastFailureDescription = message
+                        self.status = .failed(message)
                         self.scheduleHostRestart()
                     case .cancelled:
                         if self.mode == .idle {
@@ -177,7 +179,9 @@ final class NetworkManager: ObservableObject {
 
             listener.start(queue: queue)
         } catch {
-            status = .failed("Не удалось запустить сервер: \(error.localizedDescription)")
+            let message = describeNetworkError(error, context: "Сервер")
+            lastFailureDescription = message
+            status = .failed(message)
             scheduleHostRestart()
         }
     }
@@ -194,7 +198,7 @@ final class NetworkManager: ObservableObject {
             Task { @MainActor in
                 switch state {
                 case .failed(let error):
-                    self.status = .failed("Поиск серверов: \(error.localizedDescription)")
+                    self.status = .failed(self.describeNetworkError(error, context: "Поиск серверов"))
                 case .ready:
                     if self.mode != .host && self.status == .disconnected {
                         self.status = .connecting
@@ -235,6 +239,7 @@ final class NetworkManager: ObservableObject {
         hostRestartTask?.cancel()
         hostRestartTask = nil
         hostRestartAttempts = 0
+        lastFailureDescription = ""
         reconnectTask?.cancel()
         reconnectTask = nil
 
@@ -274,11 +279,23 @@ final class NetworkManager: ObservableObject {
                 try await sendRaw(framed, over: clientPeer.connection)
             }
         } catch {
-            status = .failed(error.localizedDescription)
+            status = .failed(describeNetworkError(error, context: "Отправка"))
             if mode == .client {
                 scheduleClientReconnect()
             }
         }
+    }
+
+    /// Переводит системные сетевые ошибки в понятные пользователю сообщения.
+    /// В частности распознаёт NWError.dns(kDNSServiceErr_NoAuth) (-65555) — это не сбой сети,
+    /// а отсутствие разрешения "Локальная сеть" в Настройках приватности iOS.
+    private func describeNetworkError(_ error: Error, context: String) -> String {
+        if let nwError = error as? NWError,
+           case .dns(let code) = nwError,
+           code == kDNSServiceErr_NoAuth {
+            return "Нет доступа к локальной сети. Откройте Настройки → Конфиденциальность и безопасность → Локальная сеть и включите доступ для «Я знаю», затем нажмите «Перезапустить сервер»."
+        }
+        return "\(context): \(error.localizedDescription)"
     }
 
     /// Отменяет текущий listener и ждёт подтверждения (.cancelled) от ядра,
@@ -329,7 +346,7 @@ final class NetworkManager: ObservableObject {
                     self.status = .connected
                     self.startReceiveLoop(for: peer, isClient: true)
                 case .failed(let error):
-                    self.status = .failed("Клиент: \(error.localizedDescription)")
+                    self.status = .failed(self.describeNetworkError(error, context: "Клиент"))
                     self.scheduleClientReconnect()
                 case .cancelled:
                     if self.mode == .idle {
@@ -440,7 +457,7 @@ final class NetworkManager: ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 if let error {
-                    self.status = .failed(error.localizedDescription)
+                    self.status = .failed(self.describeNetworkError(error, context: isClient ? "Клиент" : "Сервер"))
                     if isClient {
                         self.scheduleClientReconnect()
                     } else {
@@ -524,11 +541,15 @@ final class NetworkManager: ObservableObject {
 
         hostRestartAttempts += 1
         guard hostRestartAttempts <= NetworkManager.maxHostRestartAttempts else {
-            status = .failed("Не удалось запустить сервер на порту \(currentServerPort): порт занят. Укажите другой порт в настройках ведущего.")
+            let reason = lastFailureDescription.isEmpty
+                    ? "Не удалось запустить сервер на порту \(currentServerPort)."
+                    : lastFailureDescription
+            status = .failed(reason)
             return
         }
 
-        // Небольшой нарастающий бэкофф вместо фиксированных 2с, чтобы не спамить лог при затяжном конфликте порта.
+        // Небольшой нарастающий бэкофф вместо фиксированных 2с, чтобы не спамить лог при затяжном конфликте порта
+        // или пока пользователь не ответит на системный запрос разрешения "Локальная сеть".
         let delaySeconds = min(1.5 * Double(hostRestartAttempts), 6.0)
         let delayNanos = UInt64(delaySeconds * 1_000_000_000)
 
