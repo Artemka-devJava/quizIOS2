@@ -25,20 +25,24 @@ struct HostLobbyView: View {
                     activeSheet = .settings
                 } label: {
                     Label("Настройки", systemImage: "gearshape")
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
-        }
 
-        Button("Перезапустить сервер") {
+            TextField("Имя ведущего", text: $viewModel.hostNickname)
+            .textFieldStyle(.roundedBorder)
+
+            Button(startButtonTitle) {
                 viewModel.startHosting()
             }
-            .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.network.status == .connecting)
 
             HStack {
                 Text("Игроков: \(viewModel.players.count)")
                 Spacer()
                 Text(statusText)
-                    .foregroundStyle(.secondary)
+                .foregroundStyle(.secondary)
             }
 
             List(viewModel.players) { player in
@@ -49,30 +53,25 @@ struct HostLobbyView: View {
             Button("Начать игру") {
                 viewModel.startGameAsHost()
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(viewModel.players.isEmpty)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.players.isEmpty || viewModel.network.status != .connected)
 
-            Text(viewModel.players.isEmpty ? "Подключите хотя бы 1 игрока для старта" : "Можно начинать игру")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text(startGameHint)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
             Text(viewModel.connectionHint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
             Button("Назад") {
                 viewModel.resetToRoleSelection()
             }
             .buttonStyle(.bordered)
         }
-        .padding()
-        .navigationTitle("Ведущий")
-        .onAppear {
-            if viewModel.network.mode != .host || viewModel.network.status == .disconnected {
-                viewModel.startHosting()
-            }
-        }
-        .sheet(item: $activeSheet) { sheet in
+                .padding()
+                .navigationTitle("Ведущий")
+                .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .settings:
                 HostSettingsSheet(viewModel: viewModel)
@@ -82,11 +81,29 @@ struct HostLobbyView: View {
         }
     }
 
+    /// Сервер теперь запускается только по явному нажатию — до этого момента ведущий
+    /// может спокойно поменять имя и порт в настройках, не поднимая слушатель раньше времени.
+    private var startButtonTitle: String {
+        switch viewModel.network.status {
+        case .connected: return "Перезапустить сервер"
+        case .connecting: return "Запуск..."
+        case .failed: return "Повторить запуск"
+        case .disconnected: return "Запустить сервер"
+        }
+    }
+
+    private var startGameHint: String {
+        if viewModel.network.status != .connected {
+            return "Сначала запустите сервер кнопкой выше"
+        }
+        return viewModel.players.isEmpty ? "Подключите хотя бы 1 игрока для старта" : "Можно начинать игру"
+    }
+
     private var statusText: String {
         switch viewModel.network.status {
         case .connected: return "Сервер активен"
         case .connecting: return "Запуск..."
-        case .disconnected: return "Отключено"
+        case .disconnected: return "Сервер не запущен"
         case .failed(let reason): return "Ошибка: \(reason)"
         }
     }
@@ -102,10 +119,10 @@ private struct HostSettingsSheet: View {
                 Section("Сервер") {
                     TextField("Имя ведущего", text: $viewModel.hostNickname)
                     TextField("Порт", text: $viewModel.hostPortText)
-                        .keyboardType(.numberPad)
+                    .keyboardType(.numberPad)
                     Text("Текущий: \(viewModel.hostPortText)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -116,8 +133,8 @@ private struct HostSettingsSheet: View {
                     .buttonStyle(.borderedProminent)
                 }
             }
-            .navigationTitle("Настройки ведущего")
-            .toolbar {
+                    .navigationTitle("Настройки ведущего")
+                    .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Закрыть") { dismiss() }
                 }
@@ -134,7 +151,7 @@ private struct HostRulesSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Как проходит раунд")
-                        .font(.title3.bold())
+                    .font(.title3.bold())
 
                     RuleRow(number: "1", text: "Ведущий задаёт вопрос устно или читает его из внешнего источника.")
                     RuleRow(number: "2", text: "Ведущий нажимает «Открыть раунд».")
@@ -145,8 +162,8 @@ private struct HostRulesSheet: View {
                 }
                 .padding()
             }
-            .navigationTitle("Правила")
-            .toolbar {
+                    .navigationTitle("Правила")
+                    .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Закрыть") { dismiss() }
                 }
@@ -162,13 +179,13 @@ private struct RuleRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(number)
-                .font(.headline)
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(.blue, in: Circle())
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(.blue, in: Circle())
 
             Text(text)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
