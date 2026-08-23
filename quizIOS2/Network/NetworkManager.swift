@@ -500,6 +500,13 @@ final class NetworkManager: ObservableObject {
                 }
                 onEvent?(.message(msg))
             } catch {
+                // Печатаем и сырой JSON, и полную ошибку декодирования в консоль Xcode —
+                // localizedDescription в UI слишком краток, чтобы понять причину.
+                let rawJSON = String(data: messageData, encoding: .utf8) ?? "<не UTF-8: \(messageData.count) байт>"
+                print("——— [Decode] Не удалось декодировать GameMessage ———")
+                print("——— [Decode] Сырые данные: \(rawJSON)")
+                print("——— [Decode] Ошибка: \(error)")
+                print("———————————————————————————————————————————")
                 onEvent?(.message(GameMessage(kind: .error, senderID: UUID(), text: "Ошибка декодирования: \(error.localizedDescription)")))
             }
         }
