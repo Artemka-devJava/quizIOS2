@@ -270,15 +270,19 @@ final class NetworkManager: ObservableObject {
             if mode == .host {
                 if let peerID, let peer = peers[peerID] {
                     try await sendRaw(framed, over: peer.connection)
+                    print("——— [Net] Отправлено kind=\(message.kind.rawValue) одному peer'у")
                 } else {
+                    print("——— [Net] Отправка kind=\(message.kind.rawValue) всем peers (\(peers.count))")
                     for (_, peer) in peers {
                         try await sendRaw(framed, over: peer.connection)
                     }
                 }
             } else if mode == .client, let clientPeer {
                 try await sendRaw(framed, over: clientPeer.connection)
+                print("——— [Net] Отправлено kind=\(message.kind.rawValue) хосту")
             }
         } catch {
+            print("——— [Net] Ошибка отправки kind=\(message.kind.rawValue): \(error)")
             status = .failed(describeNetworkError(error, context: "Отправка"))
             if mode == .client {
                 scheduleClientReconnect()
@@ -494,6 +498,7 @@ final class NetworkManager: ObservableObject {
 
             do {
                 let msg = try decoder.decode(GameMessage.self, from: messageData)
+                print("——— [Net] Получено сообщение: kind=\(msg.kind.rawValue) sender=\(msg.senderNickname ?? "?") player=\(msg.player?.nickname ?? "-")")
                 if msg.kind == .hello, let player = msg.player {
                     peer.playerInfo = player
                     onEvent?(.playerConnected(player))
