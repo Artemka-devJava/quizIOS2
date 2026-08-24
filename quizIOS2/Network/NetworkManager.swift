@@ -452,6 +452,43 @@ final class NetworkManager: ObservableObject {
         }
     }
 
+    /// Ник считается занятым, если совпадает (без учёта регистра) с ником уже подключённого
+    /// игрока или с ником самого ведущего — иначе на скорборде было бы не различить, кто есть кто.
+    private func isNicknameTaken(_ nickname: String, excluding peer: PeerConnection) -> Bool {
+        let trimmed = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let takenByPeer = peers.values.contains { existingPeer in
+            existingPeer !== peer &&
+            existingPeer.playerInfo?.nickname
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(trimmed) == .orderedSame
+        }
+        let takenByHost = trimmed.caseInsensitiveCompare(
+            currentServiceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        ) == .orderedSame
+
+        return takenByPeer || takenByHost
+    }
+
+    /// Отправляет отклонённому клиенту причину отказа и закрывает соединение, дав пакету время уйти.
+    private func rejectDuplicateName(_ nickname: String, peer: PeerConnection) {
+        let errorMsg = GameMessage(
+            kind: .error,
+            senderID: UUID(),
+            text: "Ник \"\(nickname)\" уже занят. Выберите другой."
+        )
+        Task { [weak self] in
+            guard let self else { return }
+            if let data = try? self.encoder.encode(errorMsg) {
+                var framed = data
+                framed.append(0x0A)
+                try? await self.sendRaw(framed, over: peer.connection)
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            self.removePeer(peer.id)
+        }
+    }
+
     private func startReceiveLoop(for peer: PeerConnection, isClient: Bool) {
         receiveNextChunk(for: peer, isClient: isClient)
     }
@@ -500,6 +537,11 @@ final class NetworkManager: ObservableObject {
                 let msg = try decoder.decode(GameMessage.self, from: messageData)
                 print("——— [Net] Получено сообщение: kind=\(msg.kind.rawValue) sender=\(msg.senderNickname ?? "?") player=\(msg.player?.nickname ?? "-")")
                 if msg.kind == .hello, let player = msg.player {
+                    if mode == .host, isNicknameTaken(player.nickname, excluding: peer) {
+                        print("——— [Net] HELLO отклонён: ник \"\(player.nickname)\" уже занят")
+                        rejectDuplicateName(player.nickname, peer: peer)
+                        continue
+                    }
                     peer.playerInfo = player
                     onEvent?(.playerConnected(player))
                 }

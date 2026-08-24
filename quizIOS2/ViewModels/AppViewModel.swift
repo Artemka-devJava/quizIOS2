@@ -339,6 +339,12 @@ final class AppViewModel: ObservableObject {
 
             case .error:
                 connectionHint = msg.text ?? "Ошибка сети"
+                if selectedRole == .player, phase != .playerQuestion {
+                    network.stopAll()
+                    selectedServerID = nil
+                    phase = .playerJoin
+                    refreshServerDiscovery()
+                }
             }
         }
     }
