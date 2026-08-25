@@ -20,6 +20,11 @@ enum NetworkEvent {
     case playerConnected(PlayerInfo)
     case playerDisconnected(PlayerInfo)
     case message(GameMessage)
+    /// Игрок потерял TCP-соединение с хостом не по своей инициативе (хост вышел из игры,
+    /// закрыл приложение или сеть легла) — в отличие от игрока, закрывшего соединение
+    /// самостоятельно кнопкой "Назад". wasConnected=false — это был неудачный ПЕРВЫЙ
+    /// коннект (например, опечатка в IP), а не разрыв уже установленного соединения.
+    case hostConnectionLost(wasConnected: Bool)
 }
 
 struct DiscoveredServer: Identifiable, Equatable {
@@ -85,7 +90,10 @@ final class NetworkManager: ObservableObject {
 
     private var lastEndpoint: NWEndpoint?
 
-    private var reconnectTask: Task<Void, Never>?
+    /// Устанавливается ViewModel-ом при старте игры хостом — с этого момента новые
+    /// подключения отклоняются (нельзя зайти посреди уже идущей игры).
+    var gameInProgress = false
+
     private var hostRestartTask: Task<Void, Never>?
     private var hostRestartAttempts = 0
     private var lastFailureDescription = ""
@@ -346,8 +354,7 @@ final class NetworkManager: ObservableObject {
         hostRestartTask = nil
         hostRestartAttempts = 0
         lastFailureDescription = ""
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        gameInProgress = false
 
         stopBrowsingServers()
 
@@ -391,7 +398,7 @@ final class NetworkManager: ObservableObject {
             print("——— [Net] Ошибка отправки kind=\(message.kind.rawValue): \(error)")
             status = .failed(describeNetworkError(error, context: "Отправка"))
             if mode == .client {
-                scheduleClientReconnect()
+                handleUnexpectedClientDisconnect()
             }
         }
     }
@@ -457,12 +464,12 @@ final class NetworkManager: ObservableObject {
                     self.startReceiveLoop(for: peer, isClient: true)
                 case .failed(let error):
                     self.status = .failed(self.describeNetworkError(error, context: "Клиент"))
-                    self.scheduleClientReconnect()
+                    self.handleUnexpectedClientDisconnect()
                 case .cancelled:
                     if self.mode == .idle {
                         self.status = .disconnected
                     } else {
-                        self.scheduleClientReconnect()
+                        self.handleUnexpectedClientDisconnect()
                     }
                 default:
                     break
@@ -586,12 +593,8 @@ final class NetworkManager: ObservableObject {
     }
 
     /// Отправляет отклонённому клиенту причину отказа и закрывает соединение, дав пакету время уйти.
-    private func rejectDuplicateName(_ nickname: String, peer: PeerConnection) {
-        let errorMsg = GameMessage(
-            kind: .error,
-            senderID: UUID(),
-            text: "Ник \"\(nickname)\" уже занят. Выберите другой."
-        )
+    private func rejectConnection(reason: String, peer: PeerConnection) {
+        let errorMsg = GameMessage(kind: .error, senderID: UUID(), text: reason)
         Task { [weak self] in
             guard let self else { return }
             if let data = try? self.encoder.encode(errorMsg) {
@@ -615,7 +618,7 @@ final class NetworkManager: ObservableObject {
                 if let error {
                     self.status = .failed(self.describeNetworkError(error, context: isClient ? "Клиент" : "Сервер"))
                     if isClient {
-                        self.scheduleClientReconnect()
+                        self.handleUnexpectedClientDisconnect()
                     } else {
                         self.removePeer(peer.id)
                     }
@@ -629,7 +632,7 @@ final class NetworkManager: ObservableObject {
 
                 if isComplete {
                     if isClient {
-                        self.scheduleClientReconnect()
+                        self.handleUnexpectedClientDisconnect()
                     } else {
                         self.removePeer(peer.id)
                     }
@@ -652,9 +655,14 @@ final class NetworkManager: ObservableObject {
                 let msg = try decoder.decode(GameMessage.self, from: messageData)
                 print("——— [Net] Получено сообщение: kind=\(msg.kind.rawValue) sender=\(msg.senderNickname ?? "?") player=\(msg.player?.nickname ?? "-")")
                 if msg.kind == .hello, let player = msg.player {
+                    if mode == .host, gameInProgress {
+                        print("——— [Net] HELLO отклонён: игра уже началась")
+                        rejectConnection(reason: "Игра уже началась. Дождитесь следующей игры.", peer: peer)
+                        continue
+                    }
                     if mode == .host, isNicknameTaken(player.nickname, excluding: peer) {
                         print("——— [Net] HELLO отклонён: ник \"\(player.nickname)\" уже занят")
-                        rejectDuplicateName(player.nickname, peer: peer)
+                        rejectConnection(reason: "Ник \"\(player.nickname)\" уже занят. Выберите другой.", peer: peer)
                         continue
                     }
                     peer.playerInfo = player
@@ -691,17 +699,20 @@ final class NetworkManager: ObservableObject {
         clientPeer = nil
     }
 
-    private func scheduleClientReconnect() {
-        reconnectTask?.cancel()
+    /// Единая точка обработки потери клиентского соединения: и когда оно уже было
+    /// установлено (.connected — хост реально пропал), и когда самый первый коннект
+    /// не удался (.connecting — например, опечатка в IP). guard mode == .client
+    /// защищает от повторного срабатывания, если игрок сам вызвал stopClientOnly()/
+    /// stopAll() — тот код уже успевает выставить mode = .idle синхронно раньше,
+    /// чем сюда дойдёт асинхронный колбэк от NWConnection.
+    private func handleUnexpectedClientDisconnect() {
         guard mode == .client else { return }
-
-        reconnectTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard let self, !Task.isCancelled else { return }
-            if let endpoint = self.lastEndpoint {
-                await self.connectToEndpoint(endpoint)
-            }
-        }
+        let wasConnected = (status == .connected)
+        mode = .idle
+        status = .disconnected
+        clientPeer?.connection.cancel()
+        clientPeer = nil
+        onEvent?(.hostConnectionLost(wasConnected: wasConnected))
     }
 
     private func scheduleHostRestart() {

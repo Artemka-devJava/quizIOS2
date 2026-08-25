@@ -119,6 +119,8 @@ final class AppViewModel: ObservableObject {
         }
 
         phase = .hostControl
+        // С этого момента новые подключения отклоняются — нельзя зайти посреди игры.
+        network.gameInProgress = true
 
         Task {
             let msg = GameMessage(kind: .gameStarted, senderID: localPlayerID, senderNickname: hostNickname)
@@ -304,6 +306,14 @@ final class AppViewModel: ObservableObject {
             }
             broadcastPlayersIfHost()
 
+        case .hostConnectionLost(let wasConnected):
+            // Хост вышел из игры/закрыл приложение, или сеть легла — соединение
+            // разорвано не по инициативе игрока. Автоматически возвращаем его
+            // на экран поиска, а не оставляем висеть в ожидании ответа хоста.
+            if selectedRole == .player {
+                returnPlayerToJoinScreen(wasConnected ? "Ведущий покинул игру" : "Не удалось подключиться к ведущему")
+            }
+
         case .message(let msg):
             switch msg.kind {
             case .hello:
@@ -379,15 +389,34 @@ final class AppViewModel: ObservableObject {
                 }
 
             case .error:
-                connectionHint = msg.text ?? "Ошибка сети"
                 if selectedRole == .player, phase != .playerQuestion {
-                    network.stopAll()
-                    selectedServerID = nil
-                    phase = .playerJoin
-                    refreshServerDiscovery()
+                    returnPlayerToJoinScreen(msg.text ?? "Ошибка сети")
+                } else {
+                    connectionHint = msg.text ?? "Ошибка сети"
                 }
             }
         }
+    }
+
+    /// Возвращает игрока на экран поиска хоста, сбрасывая состояние игры/раунда —
+    /// используется и при явной ошибке от сервера (ник занят и т.п.), и при потере
+    /// соединения с хостом.
+    private func returnPlayerToJoinScreen(_ hint: String) {
+        network.stopAll()
+        selectedServerID = nil
+        players.removeAll()
+
+        roundIsOpen = false
+        activeResponder = nil
+        buzzHistory.removeAll()
+        lastResult = nil
+        localHasAttemptedInRound = false
+        localIsCurrentResponder = false
+        attemptedPlayerIDsInRound.removeAll()
+
+        phase = .playerJoin
+        connectionHint = hint
+        refreshServerDiscovery()
     }
 
     private func broadcastPlayersIfHost() {
