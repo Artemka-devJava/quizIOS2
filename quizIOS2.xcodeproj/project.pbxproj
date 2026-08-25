@@ -6,9 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		FDA38C5530079161002C043C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,9 +21,22 @@
 		FDA38C5330079161002C043C /* quizIOS2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = quizIOS2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		FDA38C6530079161002C043D /* Exceptions for "quizIOS2" folder in "quizIOS2" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FDA38C4730079161002C043C /* quizIOS2 */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		FDA38C4A30079161002C043C /* quizIOS2 */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FDA38C6530079161002C043D /* Exceptions for "quizIOS2" folder in "quizIOS2" target */,
+			);
 			path = quizIOS2;
 			sourceTree = "<group>";
 		};
@@ -337,7 +347,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 53MV48LR9A;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "quizIOS2/Info.plist";
+				INFOPLIST_FILE = quizIOS2/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Я знаю";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Камера используется, чтобы отсканировать QR-код с IP-адресом ведущего и не вводить его вручную.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Приложение использует локальную сеть для поиска ведущего и синхронизации игры.";
@@ -372,7 +382,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 53MV48LR9A;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "quizIOS2/Info.plist";
+				INFOPLIST_FILE = quizIOS2/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Я знаю";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Камера используется, чтобы отсканировать QR-код с IP-адресом ведущего и не вводить его вручную.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Приложение использует локальную сеть для поиска ведущего и синхронизации игры.";
