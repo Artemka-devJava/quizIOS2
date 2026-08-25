@@ -15,6 +15,10 @@ final class AppViewModel: ObservableObject {
     @Published var players: [PlayerInfo] = []
     @Published var connectionHint: String = ""
 
+    /// Собственный IP-адрес хоста в текущей Wi-Fi-сети — показывается игрокам
+    /// для ручного подключения/QR как запасной вариант, если у них не сработает автопоиск.
+    @Published var hostLocalIp: String?
+
     // Состояние раунда (без ввода вопросов внутри приложения)
     @Published var roundIsOpen = false
     @Published var activeResponder: PlayerInfo?
@@ -81,6 +85,7 @@ final class AppViewModel: ObservableObject {
         localHasAttemptedInRound = false
         localIsCurrentResponder = false
         attemptedPlayerIDsInRound.removeAll()
+        hostLocalIp = nil
 
         phase = .roleSelection
     }
@@ -94,6 +99,7 @@ final class AppViewModel: ObservableObject {
         Task {
             await network.startServer(port: port, serviceName: hostNickname)
             connectionHint = "Сервер \"\(hostNickname)\" запущен"
+            hostLocalIp = network.getLocalIPv4Address()
         }
     }
 
@@ -103,6 +109,7 @@ final class AppViewModel: ObservableObject {
 
     func refreshServerDiscovery() {
         network.startBrowsingServers()
+        network.startSubnetScan()
     }
 
     func startGameAsHost() {
@@ -212,18 +219,52 @@ final class AppViewModel: ObservableObject {
             return
         }
 
+        let serverName = network.discoveredServers.first(where: { $0.id == selectedServerID })?.name ?? "ведущий"
+
         Task {
             await network.connectToDiscoveredServer(id: selectedServerID)
-            try? await Task.sleep(nanoseconds: 500_000_000)
-
-            let me = PlayerInfo(id: localPlayerID, nickname: playerNickname)
-            let hello = GameMessage(kind: .hello, senderID: localPlayerID, senderNickname: playerNickname, player: me)
-            await network.send(hello)
-
-            let serverName = network.discoveredServers.first(where: { $0.id == selectedServerID })?.name ?? "ведущий"
-            connectionHint = "Подключение к \(serverName)"
-            phase = .playerWaiting
+            await joinAfterConnecting(displayName: serverName)
         }
+    }
+
+    /// Подключение вручную по IP:порт — резервный путь для сетей, где Bonjour/mDNS
+    /// не доходит между устройствами (например, Wi-Fi-хотспот с телефона: сам хотспот
+    /// обычно не пробрасывает multicast-трафик от раздающего телефона к клиенту).
+    func connectAsPlayerManual(_ hostText: String) {
+        guard !playerNickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            connectionHint = "Введите ник"
+            return
+        }
+
+        let trimmed = hostText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            connectionHint = "Введите IP-адрес хоста"
+            return
+        }
+
+        let components = trimmed.split(separator: ":")
+        let ip = String(components.first ?? "")
+        let port = components.count > 1 ? (UInt16(components[1]) ?? NetworkManager.defaultPort) : NetworkManager.defaultPort
+        guard !ip.isEmpty else {
+            connectionHint = "Неверный формат. Пример: 192.168.1.5:5000"
+            return
+        }
+
+        Task {
+            await network.connectToServer(ip: ip, port: port)
+            await joinAfterConnecting(displayName: ip)
+        }
+    }
+
+    private func joinAfterConnecting(displayName: String) async {
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        let me = PlayerInfo(id: localPlayerID, nickname: playerNickname)
+        let hello = GameMessage(kind: .hello, senderID: localPlayerID, senderNickname: playerNickname, player: me)
+        await network.send(hello)
+
+        connectionHint = "Подключение к \(displayName)"
+        phase = .playerWaiting
     }
 
     func playerPressedAnswerButton() {

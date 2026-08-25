@@ -10,6 +10,7 @@ private enum HostLobbySheet: String, Identifiable {
 struct HostLobbyView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var activeSheet: HostLobbySheet?
+    @State private var showQRSheet = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -37,6 +38,25 @@ struct HostLobbyView: View {
             }
                     .buttonStyle(.borderedProminent)
                     .disabled(viewModel.network.status == .connecting)
+
+            if let ip = viewModel.hostLocalIp {
+                Button {
+                    showQRSheet = true
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Скажите игрокам подключиться по IP (нажмите для QR-кода):")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("\(ip):\(viewModel.hostPortText)")
+                            .font(.title3.bold())
+                            .foregroundStyle(.blue)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+            }
 
             HStack {
                 Text("Игроков: \(viewModel.players.count)")
@@ -78,6 +98,9 @@ struct HostLobbyView: View {
             case .rules:
                 HostRulesSheet()
             }
+        }
+                .sheet(isPresented: $showQRSheet) {
+            QRCodeSheet(text: "\(viewModel.hostLocalIp ?? "")" + ":" + viewModel.hostPortText)
         }
     }
 
@@ -164,6 +187,42 @@ private struct HostRulesSheet: View {
             }
                     .navigationTitle("Правила")
                     .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct QRCodeSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Text("Отсканируйте камерой на телефоне игрока")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                if let image = QRCode.generateImage(from: text) {
+                    Image(uiImage: image)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 240, height: 240)
+                } else {
+                    Text("Не удалось построить QR-код")
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(text)
+                    .font(.headline)
+            }
+            .padding()
+            .navigationTitle("QR-код")
+            .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Закрыть") { dismiss() }
                 }

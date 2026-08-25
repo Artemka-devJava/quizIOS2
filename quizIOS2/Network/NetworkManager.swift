@@ -235,6 +235,112 @@ final class NetworkManager: ObservableObject {
         await connectToEndpoint(endpoint)
     }
 
+    /// Подключение к хосту вручную по IP:порт — резервный путь для сетей, где Bonjour/mDNS
+    /// не доходит между устройствами (например, Wi-Fi-хотспот с телефона).
+    func connectToServer(ip: String, port: UInt16 = NetworkManager.defaultPort) async {
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            status = .failed("Неверный порт")
+            return
+        }
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(ip), port: nwPort)
+        await connectToEndpoint(endpoint)
+    }
+
+    /// Дополняет Bonjour-поиск прямым перебором адресов подсети /24 прямыми TCP-подключениями.
+    /// Bonjour не находит хосты там, где multicast-трафик не доходит между устройствами —
+    /// например, когда один из телефонов сам раздаёт Wi-Fi-хотспот. Найденные адреса
+    /// добавляются в тот же discoveredServers, что и результаты Bonjour.
+    func startSubnetScan(port: UInt16 = NetworkManager.defaultPort) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let localIP = self.getLocalIPv4Address() else { return }
+            let parts = localIP.split(separator: ".")
+            guard parts.count == 4 else { return }
+            let prefix = parts[0...2].joined(separator: ".")
+
+            let hosts = Array(1...254)
+            let chunks = stride(from: 0, to: hosts.count, by: 32).map {
+                Array(hosts[$0..<min($0 + 32, hosts.count)])
+            }
+
+            for chunk in chunks {
+                await withTaskGroup(of: Void.self) { group in
+                    for host in chunk {
+                        let candidateIP = "\(prefix).\(host)"
+                        guard candidateIP != localIP else { continue }
+                        group.addTask { [weak self] in
+                            await self?.probeSubnetHost(candidateIP, port: port)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Короткая пробная попытка TCP-подключения к одному адресу подсети; при успехе
+    /// сразу закрывает соединение и просто добавляет адрес в список найденных хостов.
+    private func probeSubnetHost(_ ip: String, port: UInt16) async {
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(ip), port: nwPort)
+        let connection = NWConnection(to: endpoint, using: .tcp)
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumeOnce = ResumeOnce(continuation)
+
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        let id = "scan:\(ip):\(port)"
+                        self.discoveredEndpoints[id] = endpoint
+                        if !self.discoveredServers.contains(where: { $0.id == id }) {
+                            self.discoveredServers.append(DiscoveredServer(id: id, name: "Хост \(ip)", details: "Порт \(port)"))
+                        }
+                    }
+                    connection.cancel()
+                    resumeOnce.resume()
+                case .failed, .cancelled:
+                    resumeOnce.resume()
+                default:
+                    break
+                }
+            }
+
+            connection.start(queue: queue)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                connection.cancel()
+                resumeOnce.resume()
+            }
+        }
+    }
+
+    /// Собственный IPv4-адрес устройства в Wi-Fi-сети (интерфейс en0) — показывается хосту,
+    /// чтобы игроки могли подключиться вручную или по QR-коду, если автопоиск не сработает.
+    func getLocalIPv4Address() -> String? {
+        var address: String?
+        var ifaddrPtr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddrPtr) == 0, let firstAddr = ifaddrPtr else { return nil }
+        defer { freeifaddrs(ifaddrPtr) }
+
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let interface = ptr.pointee
+            guard interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            guard String(cString: interface.ifa_name) == "en0" else { continue }
+
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(
+                interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                &hostname, socklen_t(hostname.count),
+                nil, socklen_t(0), NI_NUMERICHOST
+            )
+            address = String(cString: hostname)
+            break
+        }
+        return address
+    }
+
     func stopAll() {
         hostRestartTask?.cancel()
         hostRestartTask = nil
@@ -381,8 +487,17 @@ final class NetworkManager: ObservableObject {
             items.append(DiscoveredServer(id: id, name: name, details: details))
         }
 
+        // Bonjour-браузер периодически перевызывает этот колбэк заново — раньше он
+        // полностью перезаписывал discoveredServers, из-за чего результаты скана подсети
+        // (id с префиксом "scan:") то появлялись, то бесследно пропадали. Сохраняем их.
+        let scannedItems = discoveredServers.filter { $0.id.hasPrefix("scan:") }
+        for (id, endpoint) in discoveredEndpoints where id.hasPrefix("scan:") {
+            endpointsByID[id] = endpoint
+        }
+
         discoveredEndpoints = endpointsByID
-        discoveredServers = items.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        discoveredServers = (items + scannedItems)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         if mode != .host && status == .connecting && !discoveredServers.isEmpty {
             status = .disconnected

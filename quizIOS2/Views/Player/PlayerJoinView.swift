@@ -2,6 +2,8 @@ import SwiftUI
 
 struct PlayerJoinView: View {
     @ObservedObject var viewModel: AppViewModel
+    @State private var manualHostText = ""
+    @State private var showScanner = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -61,6 +63,37 @@ struct PlayerJoinView: View {
             .buttonStyle(.borderedProminent)
             .disabled(viewModel.selectedServerID == nil)
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Не нашли хоста в списке?")
+                    .font(.headline)
+                Text("Автопоиск не всегда работает (например, в сети хотспота) — отсканируйте QR-код с экрана ведущего или введите его IP-адрес вручную")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    showScanner = true
+                } label: {
+                    Label("Сканировать QR-код", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                TextField("IP:порт (например 192.168.1.5:5000)", text: $manualHostText)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.numbersAndPunctuation)
+
+                Button("Подключиться по IP") {
+                    viewModel.connectAsPlayerManual(manualHostText)
+                }
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity)
+                .disabled(manualHostText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
             Text(viewModel.connectionHint)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -74,6 +107,12 @@ struct PlayerJoinView: View {
         .navigationTitle("Я игрок")
         .onAppear {
             viewModel.refreshServerDiscovery()
+        }
+        .sheet(isPresented: $showScanner) {
+            QRScannerSheet { scanned in
+                manualHostText = scanned
+                showScanner = false
+            }
         }
     }
 }
