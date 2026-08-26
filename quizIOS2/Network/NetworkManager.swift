@@ -302,7 +302,15 @@ final class NetworkManager: ObservableObject {
                         guard let self else { return }
                         let id = "scan:\(ip):\(port)"
                         self.discoveredEndpoints[id] = endpoint
-                        if !self.discoveredServers.contains(where: { $0.id == id }) {
+                        // Bonjour и скан подсети не делят общий идентификатор физического
+                        // хоста (Bonjour-результаты — это .service без резолвленного IP на
+                        // этом этапе, сравнить по ip:port с scan-записью нельзя), поэтому
+                        // один и тот же сервер мог показаться в списке дважды: один раз с
+                        // настоящим именем через Bonjour, второй раз как заглушка "Хост <ip>".
+                        // Скан — это фолбэк на случай, если Bonjour вообще не работает, так
+                        // что просто не добавляем scan-запись, если Bonjour уже что-то нашёл.
+                        let hasBonjourResult = self.discoveredServers.contains { !$0.id.hasPrefix("scan:") }
+                        if !hasBonjourResult && !self.discoveredServers.contains(where: { $0.id == id }) {
                             self.discoveredServers.append(DiscoveredServer(id: id, name: "Хост \(ip)", details: "Порт \(port)"))
                         }
                     }
@@ -386,8 +394,16 @@ final class NetworkManager: ObservableObject {
                     print("——— [Net] Отправлено kind=\(message.kind.rawValue) одному peer'у")
                 } else {
                     print("——— [Net] Отправка kind=\(message.kind.rawValue) всем peers (\(peers.count))")
-                    for (_, peer) in peers {
-                        try await sendRaw(framed, over: peer.connection)
+                    // По одному try внутри цикла ошибка отправки одному peer'у прерывала бы
+                    // весь broadcast — остальные peers молча не получали бы сообщение вообще.
+                    // Ловим по каждому peer'у отдельно, чтобы один отвалившийся сокет не глушил
+                    // доставку остальным (аналог фикса на Android в NetworkManager.send()).
+                    for (id, peer) in peers {
+                        do {
+                            try await sendRaw(framed, over: peer.connection)
+                        } catch {
+                            print("——— [Net] send: не удалось доставить kind=\(message.kind.rawValue) peer=\(id): \(error)")
+                        }
                     }
                 }
             } else if mode == .client, let clientPeer {
@@ -496,9 +512,12 @@ final class NetworkManager: ObservableObject {
 
         // Bonjour-браузер периодически перевызывает этот колбэк заново — раньше он
         // полностью перезаписывал discoveredServers, из-за чего результаты скана подсети
-        // (id с префиксом "scan:") то появлялись, то бесследно пропадали. Сохраняем их.
-        let scannedItems = discoveredServers.filter { $0.id.hasPrefix("scan:") }
-        for (id, endpoint) in discoveredEndpoints where id.hasPrefix("scan:") {
+        // (id с префиксом "scan:") то появлялись, то бесследно пропадали. Сохраняем их —
+        // но только пока у Bonjour в этом раунде нет собственных результатов: скан это
+        // фолбэк на случай, если Bonjour не работает, а не постоянный дубликат к нему
+        // (см. комментарий у probeSubnetHost про одинаковую проблему на стороне скана).
+        let scannedItems = items.isEmpty ? discoveredServers.filter { $0.id.hasPrefix("scan:") } : []
+        for (id, endpoint) in discoveredEndpoints where id.hasPrefix("scan:") && items.isEmpty {
             endpointsByID[id] = endpoint
         }
 

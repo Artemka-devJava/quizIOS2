@@ -114,10 +114,12 @@ final class AppViewModel: ObservableObject {
 
     func startGameAsHost() {
         guard players.count >= 1 else {
+            print("——— [Net] startGameAsHost: отменено, players пуст в момент вызова")
             connectionHint = "Нужен хотя бы 1 подключённый игрок"
             return
         }
 
+        print("——— [Net] startGameAsHost: отправка gameStarted, игроков=\(players.count)")
         phase = .hostControl
         // С этого момента новые подключения отклоняются — нельзя зайти посреди игры.
         network.gameInProgress = true
