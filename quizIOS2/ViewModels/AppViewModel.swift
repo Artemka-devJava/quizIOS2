@@ -8,7 +8,9 @@ final class AppViewModel: ObservableObject {
     @Published var selectedRole: UserRole?
 
     @Published var hostNickname: String = "Ведущий"
-    @Published var hostPortText: String = "\(NetworkManager.defaultPort)"
+    /// Порт, на котором реально поднялся сервер (один из NetworkManager.candidatePorts) —
+    /// заполняется после успешного startServer(), а не выбирается пользователем.
+    @Published var hostBoundPort: UInt16?
     @Published var playerNickname: String = ""
     @Published var selectedServerID: String?
 
@@ -91,14 +93,17 @@ final class AppViewModel: ObservableObject {
     }
 
     func startHosting() {
-        guard let port = UInt16(hostPortText), port > 0 else {
-            connectionHint = "Неверный порт"
-            return
-        }
-
         Task {
-            await network.startServer(port: port, serviceName: hostNickname)
-            connectionHint = "Сервер \"\(hostNickname)\" запущен"
+            await network.startServer(serviceName: hostNickname) { [weak self] boundPort in
+                guard let self else { return }
+                if let boundPort {
+                    self.hostBoundPort = boundPort
+                    self.connectionHint = "Сервер \"\(self.hostNickname)\" запущен на порту \(boundPort)"
+                } else {
+                    self.hostBoundPort = nil
+                    self.connectionHint = "Не удалось запустить сервер — все порты заняты"
+                }
+            }
             hostLocalIp = network.getLocalIPv4Address()
         }
     }
@@ -248,9 +253,9 @@ final class AppViewModel: ObservableObject {
 
         let components = trimmed.split(separator: ":")
         let ip = String(components.first ?? "")
-        let port = components.count > 1 ? (UInt16(components[1]) ?? NetworkManager.defaultPort) : NetworkManager.defaultPort
+        let port = components.count > 1 ? (UInt16(components[1]) ?? NetworkManager.candidatePorts[0]) : NetworkManager.candidatePorts[0]
         guard !ip.isEmpty else {
-            connectionHint = "Неверный формат. Пример: 192.168.1.5:5000"
+            connectionHint = "Неверный формат. Пример: 192.168.1.5:5001"
             return
         }
 

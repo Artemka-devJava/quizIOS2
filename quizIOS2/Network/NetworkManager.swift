@@ -67,7 +67,11 @@ private final class ResumeOnce: @unchecked Sendable {
 
 @MainActor
 final class NetworkManager: ObservableObject {
-    static let defaultPort: UInt16 = 5000
+    // Хост всегда пробует эти порты по порядку и занимает первый свободный — раньше
+    // порт был произвольным значением из текстового поля настроек, из-за чего скан
+    // подсети должен был бы перебирать все 65535 портов на каждый IP, чтобы гарантированно
+    // найти хост. Фиксированный небольшой набор делает скан быстрым и предсказуемым.
+    static let candidatePorts: [UInt16] = [5001, 5002, 5003]
     static let serviceType = "_yaznayu._tcp"
 
     private static let maxHostRestartAttempts = 5
@@ -85,8 +89,10 @@ final class NetworkManager: ObservableObject {
     private var clientPeer: PeerConnection?
     private var discoveredEndpoints: [String: NWEndpoint] = [:]
 
-    private var currentServerPort: UInt16 = NetworkManager.defaultPort
+    private var currentServerPort: UInt16 = NetworkManager.candidatePorts[0]
     private var currentServiceName = "Host"
+    private var candidatePortIndex = 0
+    private var onServerBound: ((UInt16?) -> Void)?
 
     private var lastEndpoint: NWEndpoint?
 
@@ -115,7 +121,10 @@ final class NetworkManager: ObservableObject {
         self.decoder = decoder
     }
 
-    func startServer(port: UInt16 = NetworkManager.defaultPort, serviceName: String) async {
+    /// Поднимает сервер, пробуя NetworkManager.candidatePorts по порядку и занимая первый
+    /// свободный. [onBound] вызывается один раз с итоговым портом, как только listener
+    /// реально перешёл в .ready, либо с nil, если ни один порт не освободился.
+    func startServer(serviceName: String, onBound: @escaping (UInt16?) -> Void = { _ in }) async {
         // Не даём запустить второй listener, пока первый ещё поднимается/переподнимается.
         guard !isStartingServer else { return }
         isStartingServer = true
@@ -129,12 +138,20 @@ final class NetworkManager: ObservableObject {
         await cancelCurrentListenerAndWait()
         disconnectAllPeers()
 
-        mode = .host
-        status = .connecting
-
-        currentServerPort = port
         let trimmedName = serviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         currentServiceName = trimmedName.isEmpty ? "Host" : trimmedName
+        candidatePortIndex = 0
+        onServerBound = onBound
+
+        await bindServer(port: NetworkManager.candidatePorts[0])
+    }
+
+    /// Пытается поднять listener на конкретном порту; при неудаче (порт занят и т.п.)
+    /// автоматически пробует следующий порт из candidatePorts через tryNextPortOrGiveUp.
+    private func bindServer(port: UInt16) async {
+        mode = .host
+        status = .connecting
+        currentServerPort = port
 
         do {
             let parameters = NWParameters.tcp
@@ -163,11 +180,12 @@ final class NetworkManager: ObservableObject {
                         self.status = .connected
                         self.hostRestartAttempts = 0
                         self.lastFailureDescription = ""
+                        self.onServerBound?(port)
+                        self.onServerBound = nil
                     case .failed(let error):
                         let message = self.describeNetworkError(error, context: "Сервер")
                         self.lastFailureDescription = message
-                        self.status = .failed(message)
-                        self.scheduleHostRestart()
+                        await self.tryNextPortOrGiveUp()
                     case .cancelled:
                         if self.mode == .idle {
                             self.status = .disconnected
@@ -189,7 +207,21 @@ final class NetworkManager: ObservableObject {
         } catch {
             let message = describeNetworkError(error, context: "Сервер")
             lastFailureDescription = message
-            status = .failed(message)
+            await tryNextPortOrGiveUp()
+        }
+    }
+
+    /// Переходит к следующему порту из candidatePorts, либо, если варианты исчерпаны,
+    /// сообщает об окончательной неудаче и передаёт эстафету существующему
+    /// scheduleHostRestart() (бэкофф-ретрай на случай диалога разрешения "Локальная сеть").
+    private func tryNextPortOrGiveUp() async {
+        if candidatePortIndex + 1 < NetworkManager.candidatePorts.count {
+            candidatePortIndex += 1
+            await bindServer(port: NetworkManager.candidatePorts[candidatePortIndex])
+        } else {
+            status = .failed(lastFailureDescription)
+            onServerBound?(nil)
+            onServerBound = nil
             scheduleHostRestart()
         }
     }
@@ -245,7 +277,7 @@ final class NetworkManager: ObservableObject {
 
     /// Подключение к хосту вручную по IP:порт — резервный путь для сетей, где Bonjour/mDNS
     /// не доходит между устройствами (например, Wi-Fi-хотспот с телефона).
-    func connectToServer(ip: String, port: UInt16 = NetworkManager.defaultPort) async {
+    func connectToServer(ip: String, port: UInt16 = NetworkManager.candidatePorts[0]) async {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             status = .failed("Неверный порт")
             return
@@ -258,7 +290,7 @@ final class NetworkManager: ObservableObject {
     /// Bonjour не находит хосты там, где multicast-трафик не доходит между устройствами —
     /// например, когда один из телефонов сам раздаёт Wi-Fi-хотспот. Найденные адреса
     /// добавляются в тот же discoveredServers, что и результаты Bonjour.
-    func startSubnetScan(port: UInt16 = NetworkManager.defaultPort) {
+    func startSubnetScan() {
         Task { [weak self] in
             guard let self else { return }
             guard let localIP = self.getLocalIPv4Address() else { return }
@@ -266,18 +298,22 @@ final class NetworkManager: ObservableObject {
             guard parts.count == 4 else { return }
             let prefix = parts[0...2].joined(separator: ".")
 
-            let hosts = Array(1...254)
-            let chunks = stride(from: 0, to: hosts.count, by: 32).map {
-                Array(hosts[$0..<min($0 + 32, hosts.count)])
+            // Каждый IP проверяется на всех NetworkManager.candidatePorts, а не только
+            // на одном — хост мог занять любой из них, если предыдущий был занят.
+            let targets = (1...254).flatMap { host in
+                NetworkManager.candidatePorts.map { port in (host: host, port: port) }
+            }
+            let chunks = stride(from: 0, to: targets.count, by: 32).map {
+                Array(targets[$0..<min($0 + 32, targets.count)])
             }
 
             for chunk in chunks {
                 await withTaskGroup(of: Void.self) { group in
-                    for host in chunk {
-                        let candidateIP = "\(prefix).\(host)"
+                    for target in chunk {
+                        let candidateIP = "\(prefix).\(target.host)"
                         guard candidateIP != localIP else { continue }
                         group.addTask { [weak self] in
-                            await self?.probeSubnetHost(candidateIP, port: port)
+                            await self?.probeSubnetHost(candidateIP, port: target.port)
                         }
                     }
                 }
@@ -741,7 +777,7 @@ final class NetworkManager: ObservableObject {
         hostRestartAttempts += 1
         guard hostRestartAttempts <= NetworkManager.maxHostRestartAttempts else {
             let reason = lastFailureDescription.isEmpty
-                    ? "Не удалось запустить сервер на порту \(currentServerPort)."
+                    ? "Не удалось запустить сервер (порты \(NetworkManager.candidatePorts) заняты)."
                     : lastFailureDescription
             status = .failed(reason)
             return
@@ -755,7 +791,9 @@ final class NetworkManager: ObservableObject {
         hostRestartTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delayNanos)
             guard let self, !Task.isCancelled else { return }
-            await self.startServer(port: self.currentServerPort, serviceName: self.currentServiceName)
+            // Пробуем весь набор портов заново с начала, а не только последний неудачный.
+            self.candidatePortIndex = 0
+            await self.bindServer(port: NetworkManager.candidatePorts[0])
         }
     }
 }

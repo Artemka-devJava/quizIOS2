@@ -39,7 +39,7 @@ struct HostLobbyView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(viewModel.network.status == .connecting)
 
-            if let ip = viewModel.hostLocalIp {
+            if let ip = viewModel.hostLocalIp, let port = viewModel.hostBoundPort {
                 Button {
                     showQRSheet = true
                 } label: {
@@ -47,7 +47,7 @@ struct HostLobbyView: View {
                         Text("Скажите игрокам подключиться по IP (нажмите для QR-кода):")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("\(ip):\(viewModel.hostPortText)")
+                        Text("\(ip):\(port)")
                             .font(.title3.bold())
                             .foregroundStyle(.blue)
                     }
@@ -100,7 +100,7 @@ struct HostLobbyView: View {
             }
         }
                 .sheet(isPresented: $showQRSheet) {
-            QRCodeSheet(text: "\(viewModel.hostLocalIp ?? "")" + ":" + viewModel.hostPortText)
+            QRCodeSheet(text: "\(viewModel.hostLocalIp ?? "")" + ":" + "\(viewModel.hostBoundPort.map(String.init) ?? "")")
         }
     }
 
@@ -141,9 +141,7 @@ private struct HostSettingsSheet: View {
             Form {
                 Section("Сервер") {
                     TextField("Имя ведущего", text: $viewModel.hostNickname)
-                    TextField("Порт", text: $viewModel.hostPortText)
-                    .keyboardType(.numberPad)
-                    Text("Текущий: \(viewModel.hostPortText)")
+                    Text("Порт выбирается автоматически (5001-5003)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                 }

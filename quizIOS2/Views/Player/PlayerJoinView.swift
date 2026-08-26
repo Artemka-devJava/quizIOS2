@@ -80,7 +80,7 @@ struct PlayerJoinView: View {
                 }
                 .buttonStyle(.bordered)
 
-                TextField("IP:порт (например 192.168.1.5:5000)", text: $manualHostText)
+                TextField("IP:порт (например 192.168.1.5:5001)", text: $manualHostText)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
