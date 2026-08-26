@@ -32,7 +32,20 @@ final class AppViewModel: ObservableObject {
     @Published var localHasAttemptedInRound = false
     @Published var localIsCurrentResponder = false
 
-    let localPlayerID = UUID()
+    /// Персистентный ID этого устройства как игрока — раньше генерировался заново при
+    /// каждом запуске приложения, из-за чего обрыв связи в середине игры и повторное
+    /// подключение показывали игрока как нового участника с нулевым счётом (хост хранит
+    /// счёт по id игрока и никогда не обнуляет уже существующую запись при переподключении —
+    /// единственным недостающим звеном был именно непостоянный id на стороне игрока).
+    let localPlayerID: UUID = {
+        let key = "player_id"
+        if let stored = UserDefaults.standard.string(forKey: key), let id = UUID(uuidString: stored) {
+            return id
+        }
+        let newID = UUID()
+        UserDefaults.standard.set(newID.uuidString, forKey: key)
+        return newID
+    }()
     let network = NetworkManager()
 
     // Серверная защита: кто уже нажимал в текущем открытом раунде.
@@ -44,6 +57,13 @@ final class AppViewModel: ObservableObject {
         network.onEvent = { [weak self] event in
             guard let self else { return }
             self.handle(event)
+        }
+
+        // Игрок с уже известным (например, ранее подключавшимся в этой игре) id
+        // не отклоняется правилом "игра уже началась" — это не новый игрок, а
+        // переподключение после обрыва связи, и счёт по этому id уже сохранён.
+        network.isKnownPlayerId = { [weak self] id in
+            self?.scores[id] != nil
         }
 
         // Пробрасываем изменения вложенного ObservableObject в UI ViewModel.
@@ -217,6 +237,28 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Обнуляет очки всех игроков (включая ранее известные id отключившихся игроков —
+    /// чтобы переподключение после сброса не выглядело новым игроком), не разрывая
+    /// соединения и не покидая лобби — в отличие от resetToRoleSelection().
+    func resetScoresAsHost() {
+        guard selectedRole == .host else { return }
+
+        scores = Dictionary(uniqueKeysWithValues: scores.keys.map { ($0, 0) })
+
+        roundIsOpen = false
+        activeResponder = nil
+        buzzHistory.removeAll()
+        lastResult = nil
+        localHasAttemptedInRound = false
+        localIsCurrentResponder = false
+        attemptedPlayerIDsInRound.removeAll()
+
+        Task {
+            let msg = GameMessage(kind: .scoresReset, senderID: localPlayerID, senderNickname: hostNickname)
+            await network.send(msg)
+        }
+    }
+
     func connectAsPlayer() {
         guard !playerNickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             connectionHint = "Введите ник"
@@ -386,6 +428,19 @@ final class AppViewModel: ObservableObject {
                 activeResponder = nil
                 localIsCurrentResponder = false
                 attemptedPlayerIDsInRound.removeAll()
+
+            case .scoresReset:
+                scores = Dictionary(uniqueKeysWithValues: scores.keys.map { ($0, 0) })
+                roundIsOpen = false
+                activeResponder = nil
+                buzzHistory.removeAll()
+                lastResult = nil
+                localHasAttemptedInRound = false
+                localIsCurrentResponder = false
+                attemptedPlayerIDsInRound.removeAll()
+                if selectedRole == .player {
+                    connectionHint = "Ведущий сбросил счёт"
+                }
 
             case .answerResult:
                 lastResult = msg.answerResult

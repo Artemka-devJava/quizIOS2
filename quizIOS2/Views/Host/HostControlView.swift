@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HostControlView: View {
     @ObservedObject var viewModel: AppViewModel
+    @State private var showResetScoresConfirm = false
 
     var body: some View {
         ScrollView {
@@ -16,12 +17,14 @@ struct HostControlView: View {
 
                 HStack(spacing: 10) {
                     Button(viewModel.roundIsOpen ? "Раунд открыт" : "Открыть раунд") {
+                        ButtonFeedback.trigger()
                         viewModel.openRoundAsHost()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(viewModel.roundIsOpen)
 
                     Button("Закрыть раунд") {
+                        ButtonFeedback.trigger()
                         viewModel.closeRoundAsHost()
                     }
                     .buttonStyle(.bordered)
@@ -36,12 +39,14 @@ struct HostControlView: View {
 
                             HStack(spacing: 10) {
                                 Button("Ответ верный (+1)") {
+                                    ButtonFeedback.trigger()
                                     viewModel.judgeCurrentResponder(isCorrect: true)
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(.green)
 
                                 Button("Ответ неверный") {
+                                    ButtonFeedback.trigger()
                                     viewModel.judgeCurrentResponder(isCorrect: false)
                                 }
                                 .buttonStyle(.bordered)
@@ -105,6 +110,11 @@ struct HostControlView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                Button("Сбросить счёт", role: .destructive) {
+                    showResetScoresConfirm = true
+                }
+                .buttonStyle(.bordered)
+
                 Button("Завершить и выйти") {
                     viewModel.resetToRoleSelection()
                 }
@@ -113,6 +123,15 @@ struct HostControlView: View {
             .padding()
         }
         .navigationTitle("Управление раундом")
+        .alert("Сбросить счёт?", isPresented: $showResetScoresConfirm) {
+            Button("Отмена", role: .cancel) {}
+            Button("Сбросить", role: .destructive) {
+                ButtonFeedback.trigger()
+                viewModel.resetScoresAsHost()
+            }
+        } message: {
+            Text("Очки всех игроков обнулятся, но лобби и подключения сохранятся — игра продолжится с того же места.")
+        }
     }
 
     private var sortedPlayers: [PlayerInfo] {

@@ -1,3 +1,4 @@
+import AudioToolbox
 import SwiftUI
 
 struct GameView: View {
@@ -44,6 +45,7 @@ struct GameView: View {
                 // Кнопка Ответить
                 Button {
                     buzzFeedback.impactOccurred()
+                    AudioServicesPlaySystemSound(1057)
                     viewModel.playerPressedAnswerButton()
                 } label: {
                     Text(viewModel.localHasAttemptedInRound ? "Вы уже нажимали" : "Ответить")

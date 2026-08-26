@@ -36,6 +36,7 @@ enum MessageKind: String, Codable {
     case responderCleared
     case roundClosed
     case answerResult
+    case scoresReset
     case error
 }
 

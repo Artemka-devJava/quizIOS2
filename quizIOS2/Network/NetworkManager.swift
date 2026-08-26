@@ -100,6 +100,14 @@ final class NetworkManager: ObservableObject {
     /// подключения отклоняются (нельзя зайти посреди уже идущей игры).
     var gameInProgress = false
 
+    /// Устанавливается ViewModel-ом: проверяет, известен ли хосту этот id игрока уже
+    /// (например, есть запись в таблице очков) — то есть это не новый игрок, а тот же
+    /// самый игрок, переподключающийся после обрыва связи посреди игры. Такому игроку
+    /// HELLO не отклоняется флагом gameInProgress — иначе персистентный localPlayerID
+    /// (см. AppViewModel) не спасал бы от потери прогресса именно в том сценарии, ради
+    /// которого он и был добавлен.
+    var isKnownPlayerId: ((UUID) -> Bool)?
+
     private var hostRestartTask: Task<Void, Never>?
     private var hostRestartAttempts = 0
     private var lastFailureDescription = ""
@@ -710,7 +718,8 @@ final class NetworkManager: ObservableObject {
                 let msg = try decoder.decode(GameMessage.self, from: messageData)
                 print("——— [Net] Получено сообщение: kind=\(msg.kind.rawValue) sender=\(msg.senderNickname ?? "?") player=\(msg.player?.nickname ?? "-")")
                 if msg.kind == .hello, let player = msg.player {
-                    if mode == .host, gameInProgress {
+                    let isReturningKnownPlayer = isKnownPlayerId?(player.id) == true
+                    if mode == .host, gameInProgress, !isReturningKnownPlayer {
                         print("——— [Net] HELLO отклонён: игра уже началась")
                         rejectConnection(reason: "Игра уже началась. Дождитесь следующей игры.", peer: peer)
                         continue
